@@ -6,9 +6,9 @@ A local, personal-use gaming montage engine. The first working vertical slice im
 
 | Status | Features |
 | --- | --- |
-| IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, CPU H.264/AAC rendering, letterboxing, audio fades, output validation, configuration, hardware/FFmpeg discovery, integration tests |
-| EXPERIMENTAL | RMS onset detection and activity-based direction; these are heuristic signals, not semantic game understanding or reliable beat tracking |
-| PLANNED | Advanced desktop editing, semantic kills/events, game adapters, learned AI director, reference-style analysis, advanced transitions, speed ramps, original gameplay audio mixing, GPU render validation, Windows installer |
+| IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, CPU H.264/AAC rendering, letterboxing, audio fades, gameplay mixing, measured two-pass loudness normalization, narration sidechain ducking, restrained zoom transitions, piecewise speed ramps, output validation, configuration, hardware/FFmpeg discovery, integration tests |
+| EXPERIMENTAL | Spectral-flux attack detection and activity-based narrative pacing/peak alignment; these are heuristic signals, not semantic game understanding or reliable beat tracking |
+| PLANNED | Advanced desktop editing, semantic kills/events, game adapters, learned AI director, reference-style analysis, optical-flow transitions, smooth velocity curves, semantic sound design, GPU render validation, Windows installer |
 
 This version provides a command-line engine and an initial desktop workspace; it is not a finished professional editor. It does not yet deliver the artistic judgment of a top montage editor.
 
@@ -33,7 +33,7 @@ Quote paths containing spaces. Install FFmpeg separately and verify `ffmpeg -ver
 
 ## Editing and exports
 
-The renderer exports H.264 video (CRF 18), AAC music (192 kbps), fixed dimensions and frame rate, preserving source aspect ratio with black bars. Gameplay audio is analyzed when present but excluded from the export. Clips are ordered by activity score and cut near detected music onsets. The engine uses unused source intervals around activity candidates when necessary; requested duration may shorten when footage or music is insufficient. The validation report records shortening.
+The renderer exports H.264 video (CRF 18), AAC music (192 kbps), fixed dimensions and frame rate, preserving source aspect ratio with black bars. Gameplay audio is analyzed and can be mixed at a configurable gain. Simple mode uses 25% gameplay and 80% music before measured two-pass mastering toward −16 LUFS / −1.5 dBTP and a peak limiter. Narration ducks the music with attack/release smoothing. Clips cut near detected musical attacks and align activity peaks inside shots where source bounds permit. The engine uses unused source intervals around activity candidates when necessary; requested duration may shorten when footage or music is insufficient. The validation report records shortening.
 
 Outputs include `.timeline.json`, `.analysis.json`, and `.validation.json`. Timelines reference absolute local media paths; they do not embed media or upload it. You can edit a timeline JSON and replay it. Validation checks audio/video streams, dimensions, frame rate, duration and full decode; it does not assess artistic quality or accurately recognized gameplay events.
 
@@ -49,7 +49,7 @@ See [architecture](docs/ARCHITECTURE.md), [development](docs/DEVELOPMENT.md), [t
 
 ## Christian storytelling
 
-The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, scheduled music ducking, mix limiting, and black/white fade transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.
+The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, signal-driven music ducking, mix limiting, and black/white fade transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.
 
 ## Desktop studio
 
@@ -84,4 +84,17 @@ Music matching uses local filenames (including artist/title words), not online s
 
 Advanced controls are hidden by default. Select Ollama and its model once under Advanced; mode/model, brief and music folder are remembered locally. With no model configured, the automatic activity engine remains available. The quick-create preset uses the default Christian brief and renders an original closing title, “Walk with Christ.” It does not automatically generate spoken scripture or reference dialogue. Title rendering requires FFmpeg drawtext and an available font; Windows validation remains outstanding.
 
-Kaiser-level creativity remains a development goal, not an implemented quality guarantee. Semantic visual analysis, advanced speed ramps/compositing, narration generation and iterative editorial evaluation are still needed.
+Kaiser-level creativity remains a development goal, not an implemented quality guarantee. Semantic visual analysis, smooth speed curves/compositing, narration generation and iterative editorial evaluation are still needed.
+
+## Cinematic edit profile
+
+Simple mode enables restrained center zooms, occasional piecewise fast–slow–fast retiming,
+source diversity and an activity-based build/resolve sequence. It keeps musical cut times fixed,
+never repeats used footage and preserves pitch with `atempo` for gameplay audio. A quiet source
+gets an explicit silent gameplay track while the real imported soundtrack remains audible.
+Silent music is rejected. Timeline fields persist effects, mix gains and exact activity anchors.
+
+CLI story JSON can opt in with `"edit_profile":"cinematic"`, `"transition":"zoom"`,
+`"gameplay_gain":0.25`, `"music_gain":0.8`, `"normalize_audio":true`.
+See [editing and audio](docs/EDITING.md) for constraints and quality checks.
+These are tested editing tools, not verified studio-quality creative judgment.

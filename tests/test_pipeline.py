@@ -22,6 +22,19 @@ class TimelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Timeline(1, 'music.wav', Settings().__dict__, [Clip('a', -1, 2, 0)]).validate()
 
+    def test_retimed_activity_anchor(self):
+        from montage_editor.editing import source_offset
+        candidates = [{'source':'a','time':i,'score':.8,'source_duration':30} for i in (3,9,15,21)]
+        timeline = direct(candidates,{'onsets':[1,2,3,4,5,6]},'music',Settings(),6,cinematic=True)
+        self.assertTrue(any(c.speed_profile=='impact' for c in timeline.clips))
+        for clip in timeline.clips:
+            self.assertAlmostEqual(source_offset(clip.duration,clip.duration,clip.speed_profile),clip.duration)
+            if clip.anchor_source is not None:
+                self.assertAlmostEqual(clip.start+source_offset(clip.anchor_output,clip.duration,
+                                       clip.speed_profile),clip.anchor_source)
+        with self.assertRaises(ValueError):
+            replace(timeline,gameplay_gain=float('nan')).validate()
+
     def test_director_no_overlap_or_repeat(self):
         candidates = [{'source':'a', 'time':i, 'score':1, 'source_duration':12} for i in [2,6,10]]
         timeline = direct(candidates, {'onsets':[2,4,6,8,10]}, 'song', Settings(), 30)
@@ -73,6 +86,41 @@ class RealRenderTests(unittest.TestCase):
                                     check=True,capture_output=True).stdout
             self.assertLess(np.frombuffer(frame,dtype=np.uint8).mean(), 3)
             self.assertTrue(render(replace(story,transition='fade_white'),d/'white.mp4')['valid'])
+            cinematic=replace(timeline,clips=[replace(c,speed_profile='impact',anchor_source=None,
+                anchor_output=None) for c in timeline.clips],transition='zoom',gameplay_gain=.25,
+                music_gain=.8,normalize_audio=True)
+            cinematic_report=render(cinematic,d/'cinematic.mp4')
+            self.assertEqual(cinematic_report['audio_mastering'],'measured two-pass loudnorm')
+            self.assertTrue(cinematic_report['full_decode'])
+            def decoded_frame(path):
+                return subprocess.run(['ffmpeg','-v','error','-ss','0.2','-i',str(path),
+                    '-frames:v','1','-pix_fmt','gray','-f','rawvideo','pipe:1'],
+                    check=True,capture_output=True).stdout
+            difference=abs(np.frombuffer(decoded_frame(d/'cinematic.mp4'),dtype=np.uint8).astype(float)-
+                           np.frombuffer(decoded_frame(d/'replay.mp4'),dtype=np.uint8)).mean()
+            self.assertGreater(difference,1)
+            samples=subprocess.run(['ffmpeg','-v','error','-i',str(d/'cinematic.mp4'),
+                '-vn','-ac','1','-ar','8000','-f','f32le','pipe:1'],check=True,capture_output=True).stdout
+            audio=np.frombuffer(samples,dtype='<f4')
+            self.assertGreater(np.sqrt(np.mean(audio*audio)),.01)
+            self.assertLess(abs(audio).max(),1)
+            # The soundtrack frequency survives the mix, rather than an empty audio stream.
+            spectrum=abs(np.fft.rfft(audio[16000:32000]))
+            self.assertGreater(spectrum[440],spectrum[600]*10)
+            # Silent video inputs must still concatenate with normal audio inputs.
+            silent_video=d/'silent-video.mp4'
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=blue:s=320x180:r=24',
+                            '-t','2','-c:v','libx264','-threads','2',str(silent_video)],check=True)
+            mixed_sources=replace(cinematic,clips=[Clip(str(silent_video),0,2,0,'impact'),
+                                   Clip(str(video),4,2,1)],dialogue=[],faith_message='')
+            self.assertTrue(render(mixed_sources,d/'mixed-sources.mp4')['full_decode'])
+            silent=d/'silent.wav'
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','anullsrc=r=8000:cl=mono',
+                            '-t','2',str(silent)],check=True)
+            from montage_editor.pipeline import music_analysis
+            with self.assertRaisesRegex(ValueError,'silent'):
+                music_analysis(probe(silent),2)
+
             with self.assertRaises(ValueError):
                 replace(story,dialogue=[DialogueCue(str(music),5,0,2)]).validate()
             with self.assertRaises(FileExistsError):

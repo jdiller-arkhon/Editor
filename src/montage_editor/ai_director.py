@@ -12,7 +12,7 @@ SCHEMA = {
         'candidate_order':{'type':'array','items':{'type':'integer'},'minItems':1,'maxItems':120},
         'minimum_clip':{'type':'number','minimum':.75,'maximum':6},
         'maximum_clip':{'type':'number','minimum':.75,'maximum':6},
-        'transition':{'type':'string','enum':['cut','fade_black','fade_white']},
+        'transition':{'type':'string','enum':['cut','fade_black','fade_white','zoom']},
         'transition_duration':{'type':'number','minimum':.05,'maximum':1},
         'rationale':{'type':'string','maxLength':2000},
     },
@@ -41,7 +41,7 @@ class OllamaDirector:
                  'messages':[{'role':'system','content':
                    'You direct local gaming edits. Use only supplied activity evidence, not imagined kills or visual content. '
                    'Rank candidate IDs in preferred priority order. The deterministic engine fits clips to music onsets. '
-                   'Choose global pacing and one supported transition. No commands, paths, invented media, quotations or effects. '
+                   'Choose global pacing and one supported transition; prefer cut or restrained zoom over repeated flashes. No commands, paths, invented media, quotations or effects. '
                    'Christian intent should express humility and hope, not equate in-game kills with divine approval. '
                    'Return only JSON matching this schema: '+json.dumps(SCHEMA)},
                    {'role':'user','content':json.dumps({'creative_brief':brief[:4000],'candidates':evidence})}]}
@@ -72,7 +72,7 @@ def validate_plan(plan,count):
         value=plan[name]
         if type(value) not in (int,float) or not math.isfinite(value) or not low<=value<=high:
             raise ValueError('AI pacing is outside supported bounds')
-    if plan['minimum_clip']>plan['maximum_clip'] or plan['transition'] not in ('cut','fade_black','fade_white'):
+    if plan['minimum_clip']>plan['maximum_clip'] or plan['transition'] not in ('cut','fade_black','fade_white','zoom'):
         raise ValueError('AI transition or pacing is invalid')
     if not isinstance(plan['rationale'],str) or len(plan['rationale'])>2000:
         raise ValueError('Invalid AI rationale')

@@ -260,7 +260,7 @@ class Studio(QMainWindow):
         form.addRow('Creative brief',self.ai_brief)
 
         self.transition = QComboBox()
-        for title,key in [('Hard cut','cut'),('Fade through black','fade_black'),('Fade through white','fade_white')]:
+        for title,key in [('Hard cut','cut'),('Fade through black','fade_black'),('Fade through white','fade_white'),('Motion zoom','zoom')]:
             self.transition.addItem(title,key)
         form.addRow('Transition',self.transition)
         self.fade = QDoubleSpinBox(); self.fade.setRange(.05,1); self.fade.setSingleStep(.05); self.fade.setValue(.2)
@@ -480,7 +480,9 @@ class Studio(QMainWindow):
                 settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value())
                 sources=[self.footage.item(i).text() for i in range(self.footage.count())]
                 song=self.music_path; story=self.story()
-                if automatic:story['faith_message']='Walk with Christ.'
+                if automatic:
+                    story.update(faith_message='Walk with Christ.',edit_profile='cinematic',
+                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='zoom')
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
                 if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or None

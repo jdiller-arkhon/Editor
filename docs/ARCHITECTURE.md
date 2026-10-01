@@ -9,3 +9,8 @@ The deterministic director ranks candidate peaks, places clips around them, seek
 Versioned JSON timelines contain absolute source paths, source offsets/durations, scores, music and settings. The renderer checks source bounds, creates consistently encoded temporary clips, concatenates video, adds music/fades and validates metadata plus full decode. It publishes the final file only after validation; temporary files are cleaned. Project sidecars are written after publication, so a disk failure during sidecar writing can leave a valid export without a complete project. No resumable jobs exist yet.
 
 Future desktop UI should call the engine. Game adapters should return candidate timestamp/score evidence in a common schema. Semantic evidence and models will require separate evaluation; generic motion must remain usable without them.
+
+The `editing.py` module defines output-to-source timing and matched video/audio retiming filters.
+Timeline clip profiles and anchor metadata remain backward compatible through defaults.
+The renderer retains gameplay audio through concat, mixes music/voice/gameplay, then optionally
+performs measured two-pass mastering. See EDITING.md for exact quality limits.

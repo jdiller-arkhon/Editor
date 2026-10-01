@@ -67,3 +67,13 @@
 - Produced a 12-second 720p sample through the actual CLI using animated generated cathedral artwork and synthesized music, white fades and a Christian closing title. This demonstrates mechanics, not gameplay/Kaiser-level artistry or live AI inference.
 - Sample inspection exposed video ending at 6 seconds while audio/container lasted 12. Output seeking after input interacted with frame processing. Moved accurate seek before input and now independently require video/audio stream durations to match timeline; container-only validation was insufficient.
 - Regenerated sample has full 12-second video/audio coverage, full decode and verified late title frame. Ten core tests passed in 8.976 seconds with stricter validation. Large sample/media are excluded from Git.
+
+## 2026-10-01 — Cinematic editing and audio checkpoint
+- Objective: address the rejected flash/noise sample with connected editing features, not additional synthetic demonstration promises.
+- Added editing.py output/source mapping and piecewise 1.4×/0.6×/1.4× retiming with pitch-preserving audio. Timeline persists validated activity anchors and mix/effect settings.
+- Music now uses bounded spectral-flux attack detection at 10 ms hops and rejects silent tracks. Director aligns activity peaks inside shots when possible, varies source selection and builds/resolves heuristic activity. It still does not recognize kills or downbeats.
+- Renderer retains gameplay audio, handles silent sources, adds restrained zoom edges, real narration sidechain ducking, measured two-pass loudnorm and limiting. Desktop quick mode connects cinematic settings; Ollama may select zoom with validated schema.
+- Documentation: README, ARCHITECTURE, DECISIONS, EDITING, TESTING and ROADMAP updated to distinguish implemented tools from artistic/semantic goals.
+- Tests: 11 core tests passed in 16.923 seconds, including real render/replay, audible music spectrum/RMS/peak checks, changed video frames, mastering and mixed silent/audio sources. Four desktop checks passed offscreen. Compileall passed; whitespace check corrected. Earlier mastering test exposed suppressed FFmpeg measurement logs; measurement now explicitly enables info logging.
+- No GPU, live Ollama, Windows/device playback or real-gameplay creative benchmarks claimed. Ramps are piecewise, zoom is not optical-flow compositing, narration/reference selection remains manual and Christian story meaning is not autonomously verified.
+- Next priority: real user gameplay/music/narration evaluation; semantic event evidence and phrase-aware timing, then smooth retiming/color/story controls.
