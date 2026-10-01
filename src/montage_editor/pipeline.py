@@ -1,5 +1,5 @@
 """Local heuristic analysis, deterministic direction and verified CPU rendering."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import logging
 from pathlib import Path
@@ -9,6 +9,7 @@ import tempfile
 import numpy as np
 
 from .config import Settings
+from .storytelling import DialogueCue
 
 LOG = logging.getLogger(__name__)
 
@@ -116,11 +117,20 @@ class Timeline:
     music: str
     settings: dict
     clips: list
+    dialogue: list = field(default_factory=list)
+    transition: str = 'cut'
+    transition_duration: float = .2
 
     def validate(self):
         if self.version != 1 or not self.clips:
             raise ValueError('Unsupported or empty timeline')
         Settings(**self.settings)
+        if self.transition not in ('cut', 'fade_black', 'fade_white'):
+            raise ValueError('Unsupported transition')
+        if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
+            raise ValueError('Transition duration must be in (0, 1]')
+        for cue in self.dialogue:
+            cue.validate(sum(c.duration for c in self.clips))
         for clip in self.clips:
             if not all(np.isfinite(v) for v in (clip.start, clip.duration, clip.score)):
                 raise ValueError('Non-finite timeline value')
@@ -135,6 +145,7 @@ class Timeline:
     def load(cls, path):
         data = json.loads(Path(path).read_text(encoding='utf-8'))
         data['clips'] = [Clip(**c) for c in data['clips']]
+        data['dialogue'] = [DialogueCue(**c) for c in data.get('dialogue', [])]
         result = cls(**data)
         result.validate()
         return result
@@ -222,31 +233,60 @@ def render(timeline, output):
     duration = sum(c.duration for c in timeline.clips)
     if music['duration']+.01 < duration:
         raise ValueError('Music is shorter than timeline')
+    for cue in timeline.dialogue:
+        voice = probe(cue.source)
+        if not any(s['codec_type'] == 'audio' for s in voice['streams']):
+            raise ValueError('Dialogue input must contain audio')
+        if cue.start+cue.duration > voice['duration']+.01:
+            raise ValueError('Dialogue exceeds source duration')
     with tempfile.TemporaryDirectory(prefix='montage-', dir=output.parent) as temporary:
         temporary = Path(temporary)
         for i,clip in enumerate(timeline.clips):
             LOG.info('Rendering clip %d/%d', i+1, len(timeline.clips))
+            transition_filter = ''
+            if timeline.transition != 'cut':
+                color = 'black' if timeline.transition == 'fade_black' else 'white'
+                length = min(timeline.transition_duration, clip.duration/2)
+                transition_filter = (f',fade=t=in:d={length}:color={color},'
+                                     f'fade=t=out:st={clip.duration-length}:d={length}:color={color}')
             run(['ffmpeg', '-v', 'error', '-i', clip.source, '-ss', str(clip.start),
                  '-t', str(clip.duration), '-an', '-vf',
                  f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease,'
-                 f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={settings.fps}',
+                 f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={settings.fps}'+transition_filter,
                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p',
                  '-threads', '2', str(temporary/f'{i:05d}.mp4')])
         listing = temporary/'clips.txt'
         listing.write_text(''.join(f"file '{i:05d}.mp4'\n" for i in range(len(timeline.clips))))
         pending = temporary/'final.mp4'
         fade = min(1, duration/4)
-        run(['ffmpeg', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing),
-             '-i', timeline.music, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-             '-af', f'afade=t=in:d={fade},afade=t=out:st={duration-fade}:d={fade}',
-             '-c:a', 'aac', '-b:a', '192k', '-t', str(duration), '-movflags', '+faststart', str(pending)])
+        inputs = ['ffmpeg', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing),
+                  '-i', timeline.music]
+        filters = [f'[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,'
+                   f'afade=t=in:d={fade},afade=t=out:st={duration-fade}:d={fade}[music]']
+        labels = ['[music]']
+        duck = []
+        for i,cue in enumerate(timeline.dialogue):
+            inputs += ['-i', cue.source]
+            delay = round(cue.at*1000)
+            filters.append(f'[{i+2}:a]atrim=start={cue.start}:duration={cue.duration},'
+                           f'asetpts=PTS-STARTPTS,volume={cue.gain},adelay={delay}:all=1[voice{i}]')
+            labels.append(f'[voice{i}]')
+            duck.append(f'between(t,{cue.at},{cue.at+cue.duration})')
+        if duck:
+            filters.append("[music]volume='if(" + '+'.join(duck) + ",0.25,1)':eval=frame[bed]")
+            labels[0] = '[bed]'
+        filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=first:normalize=0,'
+                       'alimiter=limit=0.95:level=0[audio]')
+        run(inputs + ['-filter_complex', ';'.join(filters), '-map', '0:v:0', '-map', '[audio]',
+                      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', str(duration),
+                      '-movflags', '+faststart', str(pending)])
         report = validate_output(pending, settings, duration)
         # Publish only after successful validation; hard link refuses concurrent overwrites.
         output.hardlink_to(pending)
     return report
 
 
-def create_montage(gameplay, music, output, settings):
+def create_montage(gameplay, music, output, settings, story=None):
     output = Path(output).resolve()
     sidecars = [output.with_suffix('.timeline.json'), output.with_suffix('.analysis.json'),
                 output.with_suffix('.validation.json')]
@@ -263,6 +303,11 @@ def create_montage(gameplay, music, output, settings):
         LOG.info('Analyzing %s', source['path'])
         candidates.extend(analyze_gameplay(source, settings))
     timeline = direct(candidates, analysis, song['path'], settings, duration)
+    if story is not None:
+        from dataclasses import replace
+        timeline = replace(timeline, dialogue=[DialogueCue(**c) for c in story.get('dialogue', [])],
+                           transition=story.get('transition', 'cut'),
+                           transition_duration=story.get('transition_duration', .2))
     report = render(timeline, output)
     timeline.save(sidecars[0])
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates}, indent=2))

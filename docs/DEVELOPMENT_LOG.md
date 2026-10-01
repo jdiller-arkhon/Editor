@@ -19,3 +19,11 @@
 - Next priority: real-gameplay quality evaluation and preview/manual control. Desktop UI, semantic AI, GPU execution and installer remain planned.
 - Clean environment: fresh venv without system packages, built/installed project wheel with freshly downloaded NumPy 2.5.3; all five tests passed in 4.158 seconds. FFmpeg remains a separately installed system executable.
 - Foundation GitHub commit: c25a568521a0978b063e788467d14e639cebcb07 (main).
+
+## 2026-10-01 — Christian storytelling controls
+- User goal: studio-quality montages/videos with a deep Christian undertone that inspire following Christ.
+- Implemented optional story JSON import, timed local dialogue cues, source-bound checks, scheduled music ducking, output limiter and black/white clip fades. Persisted cues and provenance metadata with backward-compatible timelines.
+- Added creative direction and explicit separation of original narration, paraphrases and quotations. No supplied reference audio, voice generation, verse verification or automatic theological direction.
+- Tests: mandatory generated-media render expanded to dialogue/fade render, replay serialization, invalid cue bounds and opening black-frame check; normal pipeline tests retained.
+- Remaining: real gameplay/narration quality evaluation, captions, intelligent narrative planning and desktop preview. Studio quality is an aspiration, not validated status.
+- Validation result: all five tests passed in 6.509 seconds; compileall passed.

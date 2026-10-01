@@ -8,7 +8,7 @@ A local, personal-use gaming montage engine. The first working vertical slice im
 | --- | --- |
 | IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, CPU H.264/AAC rendering, letterboxing, audio fades, output validation, configuration, hardware/FFmpeg discovery, integration tests |
 | EXPERIMENTAL | RMS onset detection and activity-based direction; these are heuristic signals, not semantic game understanding or reliable beat tracking |
-| PLANNED | Desktop UI, preview/scrubbing, semantic kills/events, game adapters, learned AI director, reference-style analysis, transitions, speed ramps, original gameplay audio mixing, GPU render validation, Windows installer |
+| PLANNED | Desktop UI, preview/scrubbing, semantic kills/events, game adapters, learned AI director, reference-style analysis, advanced transitions, speed ramps, original gameplay audio mixing, GPU render validation, Windows installer |
 
 This version is a command-line engine, not a finished desktop editor. It does not yet deliver the artistic judgment of a top montage editor.
 
@@ -46,3 +46,7 @@ Any game recording with a decodable video stream can use the generic engine. The
 Large assets belong outside Git. Local `assets/`, `models/`, `proxies/`, `cache/` and `exports/` are ignored. Never commit raw gameplay, songs, renders, caches, secrets or virtual environments. Small synthetic fixtures are generated during tests.
 
 See [architecture](docs/ARCHITECTURE.md), [development](docs/DEVELOPMENT.md), [testing](docs/TESTING.md), [roadmap](docs/ROADMAP.md) and [development log](docs/DEVELOPMENT_LOG.md).
+
+## Christian storytelling
+
+The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, scheduled music ducking, mix limiting, and black/white fade transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.

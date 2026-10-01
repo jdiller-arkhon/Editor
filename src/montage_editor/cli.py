@@ -18,6 +18,7 @@ def main():
     create.add_argument('--duration', type=float, default=30)
     create.add_argument('--width', type=int, default=1280)
     create.add_argument('--height', type=int, default=720)
+    create.add_argument('--story', help='JSON dialogue cues and transition settings')
     create.add_argument('--fps', type=int, default=30)
     replay = commands.add_parser('render', help='Render a saved timeline')
     replay.add_argument('timeline')
@@ -31,7 +32,11 @@ def main():
             result = render(Timeline.load(args.timeline), args.output)
         else:
             settings = Settings(width=args.width, height=args.height, fps=args.fps, duration=args.duration)
-            result = create_montage(args.gameplay, args.music, args.output, settings)
+            story = None
+            if args.story:
+                from pathlib import Path
+                story = json.loads(Path(args.story).read_text(encoding='utf-8'))
+            result = create_montage(args.gameplay, args.music, args.output, settings, story)
         print(json.dumps(result, indent=2))
     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:
         detail = error.stderr.decode(errors='replace') if isinstance(error, subprocess.CalledProcessError) else str(error)

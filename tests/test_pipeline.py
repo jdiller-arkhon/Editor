@@ -1,4 +1,7 @@
 import json
+from dataclasses import replace
+import numpy as np
+from montage_editor.storytelling import DialogueCue
 from pathlib import Path
 import subprocess
 import tempfile
@@ -48,6 +51,19 @@ class RealRenderTests(unittest.TestCase):
             timeline = Timeline.load(output.with_suffix('.timeline.json'))
             replay = render(timeline, d/'replay.mp4')
             self.assertTrue(replay['valid'])
+            story = replace(timeline, dialogue=[DialogueCue(str(music), 1, 0, 2,
+                            reference='Original narration inspired by Christian hope')],
+                            transition='fade_black')
+            story.save(d/'story.json')
+            self.assertEqual(Timeline.load(d/'story.json'), story)
+            self.assertTrue(render(story, d/'story.mp4')['full_decode'])
+            frame = subprocess.run(['ffmpeg','-v','error','-i',str(d/'story.mp4'),
+                                    '-frames:v','1','-pix_fmt','gray','-f','rawvideo','pipe:1'],
+                                    check=True,capture_output=True).stdout
+            self.assertLess(np.frombuffer(frame,dtype=np.uint8).mean(), 3)
+            self.assertTrue(render(replace(story,transition='fade_white'),d/'white.mp4')['valid'])
+            with self.assertRaises(ValueError):
+                replace(story,dialogue=[DialogueCue(str(music),5,0,2)]).validate()
             with self.assertRaises(FileExistsError):
                 render(timeline, output)
             with self.assertRaises(ValueError):
