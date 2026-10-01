@@ -23,6 +23,15 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(window.story()['dialogue'][0]['at'],1)
         window.close()
 
+    def test_reference_workspace_and_real_analysis(self):
+        window=Studio()
+        self.assertFalse(window.banner.art.isNull())
+        window.show_analysis([dict(source='source.mp4',time=2.5,score=.8)])
+        self.assertIn('0.800 (not confidence)',window.analysis_label.text())
+        window.show(); self.app.processEvents()
+        self.assertFalse(window.grab().isNull())
+        window.close()
+
     def test_background_job_reports_failures(self):
         errors=[]
         def fail(): raise ValueError('invalid media')

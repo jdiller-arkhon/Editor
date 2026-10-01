@@ -82,3 +82,26 @@ class TimelineLanes(QWidget):
             block(cue.at,cue.duration,2,cue.reference or Path(cue.source).name,'#536960','#293e35')
         x=left+width*max(0,min(total,self.position))/total
         p.setPen(QPen(QColor('#f1e2c0'),2));p.drawLine(int(x),20,int(x),self.height()-5)
+
+
+class CathedralBanner(QWidget):
+    def __init__(self):
+        super().__init__()
+        from PySide6.QtGui import QPixmap
+        self.art=QPixmap(str(Path(__file__).parent/'resources'/'cathedral.jpg'))
+        self.setMinimumHeight(170);self.setMaximumHeight(220)
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        if not self.art.isNull():
+            scaled=self.art.scaled(self.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)
+            p.drawPixmap((self.width()-scaled.width())//2,0,scaled)
+        else:p.fillRect(self.rect(),QColor('#101216'))
+        shade=QLinearGradient(0,0,0,self.height());shade.setColorAt(0,QColor(0,0,0,10));shade.setColorAt(1,QColor(0,0,0,110))
+        p.fillRect(self.rect(),shade)
+        p.setPen(QColor('#eeeeee'));font=QFont('Georgia',22);font.setLetterSpacing(QFont.AbsoluteSpacing,6);p.setFont(font)
+        y=self.height()*.5
+        p.drawText(QRectF(30,y,self.width()*.4,42),Qt.AlignCenter,'CREATE')
+        p.drawText(QRectF(self.width()*.58,y,self.width()*.4-30,42),Qt.AlignCenter,'WITH PURPOSE')
+        font=QFont('Segoe UI',9);font.setLetterSpacing(QFont.AbsoluteSpacing,4);p.setFont(font);p.setPen(QColor('#bfc1c4'))
+        p.drawText(QRectF(0,self.height()-38,self.width(),25),Qt.AlignCenter,'FAITH  /  FOCUS  /  DISCIPLINE')

@@ -41,3 +41,10 @@
 - Added code-native cinematic light/cross canvas, concentric depth details, gradient panel surfaces, soft shadows and raised controls. No generated fake footage.
 - Added actual video/music/dialogue timeline lanes with time ruler and export seek. Empty lanes are clearly empty; no fabricated waveform or events. Added module launch support (`python -m montage_editor.desktop`).
 - Offscreen desktop tests pass; refreshed screenshot inspected. Audible playback and Windows remain unvalidated.
+
+## 2026-10-01 — User-supplied DRIFT reference redesign
+- Read uploaded image(5).png directly from scratch. Adopted DRIFT branding, left navigation, cathedral/cross hero, monochrome raised surfaces, five workflow cards, wide preview and scene/story inspector.
+- Generated original cathedral backdrop using built-in image generation with the user's image as style/composition reference, not an edit target. Packaged compressed resource at src/montage_editor/resources/cathedral.jpg; user reference itself is not committed.
+- Implemented separate background Analyze action returning real motion/audio candidates and displaying top activity/time; score explicitly not semantic confidence. Preserved working import/music/dialogue/render workflows. Unimplemented AI Director/Color/Styles navigation disabled.
+- Source library reveals after media import; initial home layout prioritizes the reference composition. Actual timeline lanes remain connected to stored data. Empty preview is clearly empty; no fabricated gameplay/waveforms.
+- Validation: three offscreen desktop checks passed; compileall passed; built wheel and verified packaged cathedral asset; final screenshot inspected. Windows/device playback remain unvalidated. Advanced effect and semantic AI controls from reference still planned.

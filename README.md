@@ -65,3 +65,5 @@ Desktop controls are tested offscreen on Linux; physical audio playback and Wind
 ![Desktop workspace](docs/ui-preview.png)
 
 Linux desktop dependencies include `libegl1`, `libgl1`, `libopengl0` and `libpulse0` (Ubuntu packages). The desktop CI explicitly installs these; missing `libpulse0` caused the initial desktop run failure. Launch with `montage-studio` or `python -m montage_editor.desktop` after installing the desktop extra. The custom workspace now includes layered surfaces and actual timeline lanes. Timeline seeking applies to the rendered export, not unrendered source sequences.
+
+The desktop now follows the supplied DRIFT visual reference with an original packaged cathedral backdrop, monochrome navigation and five workflow cards. Analyze independently measures gameplay motion/audio and reports candidate activity (not kill confidence). The source library appears after import. AI Director, Color and Styles navigation are disabled until implemented.

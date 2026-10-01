@@ -12,27 +12,31 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
     QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect)
 
-from .workspace_widgets import CinemaCanvas, TimelineLanes
+from .workspace_widgets import CinemaCanvas, TimelineLanes, CathedralBanner
 from .config import Settings
-from .pipeline import Timeline, create_montage, render
+from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay
 
 STYLE = '''
 QWidget { background:#0d0e10; color:#ededee; font-family:Inter,Segoe UI,sans-serif; font-size:12px; }
 QMainWindow {background:#090a0c;} QFrame#panel {background:qlineargradient(x1:0,y1:0,x2:0.8,y2:1,stop:0 #242831,stop:0.15 #171b22,stop:1 #101319);border:1px solid #343a45;border-radius:14px;}
 QLabel {background:transparent;} QLabel#brand {font-size:23px;font-weight:700;letter-spacing:3px;}
 QLabel#title {font-size:20px;font-weight:600;} QLabel#muted {color:#979ba4;}
-QLabel#eyebrow {color:#c9b794;font-size:10px;font-weight:600;letter-spacing:2px;}
+QLabel#eyebrow {color:#c9ced5;font-size:10px;font-weight:600;letter-spacing:2px;}
 QPushButton {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #303640,stop:1 #1b2029);border:1px solid #424955;border-radius:7px;padding:9px 13px;}
 QPushButton:hover {background:#30333b;border-color:#777b86;}
 QPushButton:disabled {color:#60636c;background:#191b20;}
-QPushButton#primary {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #fff2d5,stop:1 #bca477);color:#151311;font-weight:700;border:0;padding:12px;}
+QPushButton#primary {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffffff,stop:1 #9ba3ae);color:#151311;font-weight:700;border:0;padding:12px;}
 QListWidget,QTableWidget {background:#111216;border:1px solid #2a2d34;border-radius:6px;alternate-background-color:#181a20;}
 QHeaderView::section {background:#202228;color:#aeb2bc;border:0;padding:7px;}
 QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#202228;border:1px solid #343740;border-radius:5px;padding:6px;}
 QProgressBar {border:0;background:#22252b;border-radius:3px;height:5px;}
-QProgressBar::chunk {background:#c9b794;}
+QProgressBar::chunk {background:#c9ced5;}
 QSlider::groove:horizontal {height:4px;background:#30333b;}
-QSlider::handle:horizontal {background:#e8ddc8;width:10px;margin:-4px 0;border-radius:5px;}
+QSlider::handle:horizontal {background:#edf0f4;width:10px;margin:-4px 0;border-radius:5px;}
+QFrame#rail {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #101318,stop:1 #050608);border-right:1px solid #353b44;}
+QPushButton#nav {text-align:left;background:transparent;border:0;padding:12px;font-size:14px;}
+QPushButton#nav:hover {background:#2a3038;border:1px solid #aeb4be;}
+QPushButton#workflow {border:1px solid #787f8a;font-size:12px;text-align:left;padding:12px;}
 QSplitter::handle {background:#0d0e10;width:8px;height:8px;}
 '''
 
@@ -74,25 +78,58 @@ class RenderJob(QThread):
 class Studio(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Editor • Montage Studio')
-        self.resize(1600,1050)
-        self.setMinimumSize(1100,760)
+        self.setWindowTitle('DRIFT • Montage Studio')
+        self.resize(1680,1120)
+        self.setMinimumSize(1280,950)
         self.music_path = None
         self.timeline = None
         self.last_output = None
         self.job = None
         root = QWidget()
         self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(24,18,24,20)
+        outer = QHBoxLayout(root)
+        outer.setContentsMargins(0,0,16,14); outer.setSpacing(16)
+        rail=QFrame(); rail.setObjectName('rail'); rail.setFixedWidth(190)
+        rail_layout=QVBoxLayout(rail); rail_layout.setContentsMargins(18,24,18,20); rail_layout.setSpacing(10)
+        rail_layout.addWidget(label('✝  DRIFT','brand'))
+        rail_layout.addWidget(label('MONTAGE STUDIO','eyebrow'))
+        rail_layout.addSpacing(22)
+        for name,callback in [('Home',lambda:self.screen.setCurrentIndex(0)),
+                              ('Import',self.import_media),('AI Director',None),
+                              ('Timeline',lambda:self.timeline_table.setFocus()),
+                              ('Effects',lambda:self.transition.setFocus()),
+                              ('Audio',self.import_music),('Color',None),('Styles',None),
+                              ('Export',self.export)]:
+            button=QPushButton(name);button.setObjectName('nav')
+            if callback:button.clicked.connect(callback)
+            else:button.setEnabled(False);button.setToolTip('Planned — not yet implemented')
+            rail_layout.addWidget(button)
+        rail_layout.addStretch()
+        rail_layout.addWidget(label('PROJECT','eyebrow'))
+        rail_layout.addWidget(label('Local workspace','muted'))
+        rail_layout.addWidget(label('FAITH • FOCUS','eyebrow'))
+        outer.addWidget(rail)
+        body=QWidget(); outer.addWidget(body,1)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0,18,0,0)
         header = QHBoxLayout()
-        header.addWidget(label('EDITOR', 'brand'))
+        header.addWidget(label('D R I F T', 'brand'))
         header.addWidget(label(' /  MONTAGE STUDIO', 'muted'))
         header.addStretch()
         header.addWidget(label('PURPOSE IN EVERY FRAME', 'eyebrow'))
         layout.addLayout(header)
         subtitle = label('Create with conviction.   •   Local footage. Real exports.', 'muted')
         layout.addWidget(subtitle)
+        self.banner=CathedralBanner(); layout.addWidget(self.banner)
+        steps=QHBoxLayout(); steps.setSpacing(12)
+        for title,detail,callback in [('IMPORT','Clips · Recordings · Music',self.import_media),
+                                      ('ANALYZE','Measure motion and audio',self.analyze_sources),
+                                      ('GENERATE','Build and render your edit',self.export),
+                                      ('REVIEW','Open a saved timeline',self.load_timeline),
+                                      ('EXPORT','Render the loaded timeline',self.replay_export)]:
+            card=QPushButton(title+'  →\n'+detail); card.setObjectName('workflow')
+            card.setMinimumHeight(68);card.clicked.connect(callback);steps.addWidget(card,1)
+        layout.addLayout(steps)
         workspace = QSplitter(Qt.Horizontal)
         layout.addWidget(workspace,1)
         assets,left = panel()
@@ -115,7 +152,9 @@ class Studio(QMainWindow):
         load = QPushButton('Open saved timeline')
         load.clicked.connect(self.load_timeline)
         left.addWidget(load)
+        self.assets_panel=assets
         workspace.addWidget(assets)
+        assets.hide()
         center = QWidget()
         column = QVBoxLayout(center)
         column.setContentsMargins(0,0,0,0)
@@ -124,7 +163,7 @@ class Studio(QMainWindow):
         self.preview_title = label('Import footage to begin','title')
         view.addWidget(self.preview_title)
         self.video = QVideoWidget()
-        self.video.setMinimumHeight(280)
+        self.video.setMinimumHeight(210)
         self.screen = QStackedWidget()
         empty = CinemaCanvas(); empty_layout = QVBoxLayout(empty)
         empty_layout.addStretch(3)
@@ -171,13 +210,15 @@ class Studio(QMainWindow):
         column.addWidget(timeline,2)
         workspace.addWidget(center)
         inspector,right = panel()
-        right.addWidget(label('04  /  STORY & FINISH','eyebrow'))
-        right.addWidget(label('Light. Hope. Purpose.','title'))
+        right.addWidget(label('04  /  SCENE & STORY','eyebrow'))
+        right.addWidget(label('Faith drives discipline.','title'))
+        self.analysis_label=label('SCENE ANALYSIS\nImport footage and choose Analyze.\nMotion/audio scores are heuristic; kill detection is planned.','muted')
+        self.analysis_label.setWordWrap(True);right.addWidget(self.analysis_label)
         right.addWidget(label('Layer your own Christian narration or reference audio.','muted'))
         self.dialogue = QTableWidget(0,6)
         self.dialogue.setHorizontalHeaderLabels(['Audio','At','In','Length','Reference','Kind'])
         self.dialogue.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.dialogue.setMinimumHeight(140)
+        self.dialogue.setMinimumHeight(100)
         self.dialogue.setToolTip('Editable timing in seconds. Reference is metadata, not a rendered caption.')
         right.addWidget(self.dialogue)
         add = QPushButton('+ Add dialogue recording')
@@ -215,7 +256,7 @@ class Studio(QMainWindow):
         self.open_button.setEnabled(False); self.open_button.clicked.connect(self.open_export)
         right.addWidget(self.open_button)
         workspace.addWidget(inspector)
-        workspace.setSizes([240,820,390])
+        workspace.setSizes([220,1000,400])
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
         layout.addWidget(self.progress)
         self.status = label('Ready • Import gameplay and music. Advanced AI direction and speed ramps are planned.','muted')
@@ -223,13 +264,40 @@ class Studio(QMainWindow):
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
 
+    def replay_export(self):
+        if self.timeline is None:
+            QMessageBox.information(self,'Open a project','Generate or open a timeline first.');return
+        self.export(replay=True)
+
+    def analyze_sources(self):
+        if self.job is not None:return
+        sources=[self.footage.item(i).text() for i in range(self.footage.count())]
+        if not sources:
+            QMessageBox.information(self,'Import footage','Add gameplay before analyzing.');return
+        settings=Settings()
+        def analyze():
+            return [candidate for path in sources for candidate in analyze_gameplay(probe(path),settings)]
+        self.job=RenderJob(analyze)
+        self.progress.setRange(0,0);self.status.setText('Analyzing source motion and audio activity…')
+        self.export_button.setEnabled(False);self.replay_button.setEnabled(False)
+        self.job.done.connect(self.show_analysis);self.job.failed.connect(self.failed);self.job.finished.connect(self.finished)
+        self.job.start()
+
+    def show_analysis(self,candidates):
+        ranked=sorted(candidates,key=lambda c:-c['score'])
+        if ranked:
+            top=ranked[0]
+            self.analysis_label.setText(f"SCENE ANALYSIS\n{len(ranked)} candidate moments\nTop activity: {top['score']:.3f} (not confidence)\n{Path(top['source']).name} at {top['time']:.2f}s\nSemantic game-event detection is planned.")
+        self.status.setText(f'Analysis complete • {len(ranked)} motion/audio candidate moments. Ready to generate.')
+
     def import_media(self):
         files,_ = QFileDialog.getOpenFileNames(self,'Import gameplay','','Video (*.mp4 *.mkv *.mov *.webm);;All files (*)')
         existing = {self.footage.item(i).text() for i in range(self.footage.count())}
         for path in files:
             if path not in existing:
                 self.footage.addItem(path); existing.add(path)
-        if self.footage.count(): self.footage.setCurrentRow(0)
+        if self.footage.count():
+            self.assets_panel.show(); self.footage.setCurrentRow(0)
 
     def import_music(self):
         path,_ = QFileDialog.getOpenFileName(self,'Choose music','','Audio (*.wav *.mp3 *.flac *.m4a);;All files (*)')
