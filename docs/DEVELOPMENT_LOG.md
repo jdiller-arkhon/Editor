@@ -62,3 +62,8 @@
 - Added original Christian closing title for quick mode and persisted faith_message in backward-compatible timelines. FFmpeg drawtext uses a literal text file with expansion disabled. No downloaded songs, fabricated scripture or synthesized speech.
 - Validation: ten core tests passed in 8.677 seconds; four desktop checks passed in .325 seconds. Covers local music matching, duplicate drop ingestion, settings persistence, default hidden inspector and real titled render/replay. Screenshot inspected. Previous Ollama integration GitHub CI passed.
 - Limitations: song lookup matches local filenames only; library scan bounded to 10,000 entries. Windows drag/drop/device execution and live Ollama quality remain unvalidated. Artistic equivalence to Kaiser, advanced effects and autonomous quality iteration remain goals.
+
+## 2026-10-01 — Actual sample render and duration regression
+- Produced a 12-second 720p sample through the actual CLI using animated generated cathedral artwork and synthesized music, white fades and a Christian closing title. This demonstrates mechanics, not gameplay/Kaiser-level artistry or live AI inference.
+- Sample inspection exposed video ending at 6 seconds while audio/container lasted 12. Output seeking after input interacted with frame processing. Moved accurate seek before input and now independently require video/audio stream durations to match timeline; container-only validation was insufficient.
+- Regenerated sample has full 12-second video/audio coverage, full decode and verified late title frame. Ten core tests passed in 8.976 seconds with stricter validation. Large sample/media are excluded from Git.

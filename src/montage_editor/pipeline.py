@@ -203,6 +203,10 @@ def validate_output(path, settings, expected_duration):
     if not videos or not audios:
         raise ValueError('Export must contain video and audio')
     video = videos[0]
+    for stream in (video,audios[0]):
+        stream_duration=float(stream.get('duration',0))
+        if abs(stream_duration-expected_duration)>max(.25,2/settings.fps):
+            raise ValueError('Video/audio stream duration does not match timeline')
     if (video['width'], video['height']) != (settings.width, settings.height):
         raise ValueError('Export dimensions do not match timeline')
     numerator, denominator = map(int, video['avg_frame_rate'].split('/'))
@@ -259,7 +263,7 @@ def render(timeline, output):
                 title_filter = (f',drawtext=textfile=faith-title.txt:expansion=none:fontcolor=white:'
                                 f'fontsize={max(18,settings.height//22)}:box=1:boxcolor=black@0.6:'
                                 f'boxborderw=12:x=(w-tw)/2:y=h-th-50')
-            run(['ffmpeg', '-v', 'error', '-i', clip.source, '-ss', str(clip.start),
+            run(['ffmpeg', '-v', 'error', '-ss', str(clip.start), '-i', clip.source,
                  '-t', str(clip.duration), '-an', '-vf',
                  f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease,'
                  f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={settings.fps}'+transition_filter+title_filter,
