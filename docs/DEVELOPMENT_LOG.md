@@ -27,3 +27,11 @@
 - Tests: mandatory generated-media render expanded to dialogue/fade render, replay serialization, invalid cue bounds and opening black-frame check; normal pipeline tests retained.
 - Remaining: real gameplay/narration quality evaluation, captions, intelligent narrative planning and desktop preview. Studio quality is an aspiration, not validated status.
 - Validation result: all five tests passed in 6.509 seconds; compileall passed.
+
+## 2026-10-01 — Reference research and desktop workspace
+- User requested Kaiser-style editing techniques with Christian flair, then a premium detailed UI.
+- Identified likely @KaiserEdits using primary channel/project-store sources. Project store confirms After Effects; playback unavailable. Provisional skill roadmap written in REFERENCE_STYLE.md; no claimed frame-level study or plugin inventory.
+- Added optional PySide6 desktop entry point with native imports, Qt multimedia preview/playback, actual timeline table, dialogue cue/provenance editing, export settings, background RenderJob, error display and validated output preview.
+- Added separate desktop CI job. Two desktop checks passed offscreen; five core/render tests passed in 13.330 seconds. Screenshot inspected and included in docs. Compile/import integrity checked.
+- Offscreen environment reports unavailable PipeWire/PulseAudio devices; audible playback not validated. Windows remains untested. No cancel/resume, manual clip editing, captions or advanced motion/speed effects yet. Loaded-timeline replay uses stored controls, not inspector edits.
+- Next: obtain accessible local reference clips for precise style breakdown, test desktop with real footage/audio on Windows, then implement measured timing/speed/transition controls.

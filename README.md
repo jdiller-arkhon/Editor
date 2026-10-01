@@ -8,9 +8,9 @@ A local, personal-use gaming montage engine. The first working vertical slice im
 | --- | --- |
 | IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, CPU H.264/AAC rendering, letterboxing, audio fades, output validation, configuration, hardware/FFmpeg discovery, integration tests |
 | EXPERIMENTAL | RMS onset detection and activity-based direction; these are heuristic signals, not semantic game understanding or reliable beat tracking |
-| PLANNED | Desktop UI, preview/scrubbing, semantic kills/events, game adapters, learned AI director, reference-style analysis, advanced transitions, speed ramps, original gameplay audio mixing, GPU render validation, Windows installer |
+| PLANNED | Advanced desktop editing, semantic kills/events, game adapters, learned AI director, reference-style analysis, advanced transitions, speed ramps, original gameplay audio mixing, GPU render validation, Windows installer |
 
-This version is a command-line engine, not a finished desktop editor. It does not yet deliver the artistic judgment of a top montage editor.
+This version provides a command-line engine and an initial desktop workspace; it is not a finished professional editor. It does not yet deliver the artistic judgment of a top montage editor.
 
 ## Requirements
 
@@ -50,3 +50,16 @@ See [architecture](docs/ARCHITECTURE.md), [development](docs/DEVELOPMENT.md), [t
 ## Christian storytelling
 
 The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, scheduled music ducking, mix limiting, and black/white fade transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.
+
+## Desktop studio
+
+```sh
+python -m pip install -e '.[desktop]'
+montage-studio
+```
+
+The PySide6 workspace offers native file import, preview/playback/scrubbing, real timeline inspection, editable dialogue cues and references, transition/export settings, background rendering and validated export preview. Dialogue Kind accepts `original`, `paraphrase`, or `quotation`; references are metadata, not captions. “Render loaded timeline” uses stored settings and dialogue; inspector controls apply to new generation. Render progress is indeterminate; there is no cancellation/resume yet. Close is blocked during an export.
+
+Desktop controls are tested offscreen on Linux; physical audio playback and Windows execution remain unvalidated. Qt multimedia codecs/device support may differ from FFmpeg rendering. Advanced reference effects and manual clip editing remain planned. See [reference style brief](docs/REFERENCE_STYLE.md).
+
+![Desktop workspace](docs/ui-preview.png)
