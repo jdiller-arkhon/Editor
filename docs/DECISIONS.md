@@ -15,3 +15,13 @@ Favor restrained zoom over automatic flashes. Retain gameplay audio in all inter
 use silent tracks for absent source audio so concat has a uniform stream layout. Drive ducking
 from actual narration and measure the complete mix before optional loudness mastering.
 No sound effects are fabricated to compensate for absent footage/events.
+
+## 2026-10-01 — Frame timing and media staging
+
+Quantize automatically directed cuts to complete output frames and supply explicit concat
+shot durations. Encode MP4 intermediates in native temporary storage because muxers seek
+back to write headers; workspace-backed random writes produced truncated/missing moov data
+in the real-footage test. After validation, sequentially copy into a destination staging file,
+flush/fsync and hard-link the final path without replacing existing files. Remove the stage
+on success/failure. This also handles different source/destination filesystems without publishing
+an incomplete export. Temporary storage needs sufficient space for encoded shots and final video.

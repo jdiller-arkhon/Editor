@@ -2,6 +2,8 @@
 from dataclasses import asdict, dataclass, field
 import json
 import logging
+import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -200,6 +202,8 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
         cuts = [t for t in music['onsets']
                 if position+settings.minimum_clip <= t <= position+settings.maximum_clip]
         length = min(remaining, cuts[0]-position if cuts else settings.maximum_clip)
+        # Cuts must occupy complete output frames, avoiding cumulative concat drift.
+        length=min(remaining,max(1/settings.fps,round(length*settings.fps)/settings.fps))
         profile='impact' if cinematic and len(clips)%3==1 and length>=1 else 'normal'
         interior=[t-position for t in music['onsets'] if position+.25*length<=t<=position+.75*length]
         target=min(interior,key=lambda t:abs(t-length*.5)) if interior else length*.5
@@ -254,7 +258,7 @@ def validate_output(path, settings, expected_duration):
     for stream in (video,audios[0]):
         stream_duration=float(stream.get('duration',0))
         if abs(stream_duration-expected_duration)>max(.25,2/settings.fps):
-            raise ValueError('Video/audio stream duration does not match timeline')
+            raise ValueError(f"{stream['codec_type']} stream duration {stream_duration:.3f}s differs from timeline {expected_duration:.3f}s")
     if (video['width'], video['height']) != (settings.width, settings.height):
         raise ValueError('Export dimensions do not match timeline')
     numerator, denominator = map(int, video['avg_frame_rate'].split('/'))
@@ -294,7 +298,8 @@ def render(timeline, output):
             raise ValueError('Dialogue input must contain audio')
         if cue.start+cue.duration > voice['duration']+.01:
             raise ValueError('Dialogue exceeds source duration')
-    with tempfile.TemporaryDirectory(prefix='montage-', dir=output.parent) as temporary:
+    # Encode on the native temporary filesystem: muxers seek when writing MP4 headers.
+    with tempfile.TemporaryDirectory(prefix='montage-') as temporary:
         temporary = Path(temporary)
         if timeline.faith_message:
             (temporary/'faith-title.txt').write_text(timeline.faith_message,encoding='utf-8')
@@ -332,7 +337,8 @@ def render(timeline, output):
                  '-t',str(clip.duration),'-c:v','libx264','-preset','fast','-crf','18','-pix_fmt','yuv420p',
                  '-c:a','aac','-b:a','192k','-threads','2',str(temporary/f'{i:05d}.mp4')],cwd=temporary)
         listing = temporary/'clips.txt'
-        listing.write_text(''.join(f"file '{i:05d}.mp4'\n" for i in range(len(timeline.clips))))
+        listing.write_text(''.join(f"file '{i:05d}.mp4'\nduration {clip.duration:.9f}\n"
+                                    for i,clip in enumerate(timeline.clips)))
         pending = temporary/'final.mp4'
         fade = min(1, duration/4)
         inputs = ['ffmpeg', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing),
@@ -381,7 +387,21 @@ def render(timeline, output):
         report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips})
         report['transition'] = timeline.transition
         # Publish only after successful validation; hard link refuses concurrent overwrites.
-        output.hardlink_to(pending)
+        # Copy sequentially into the destination filesystem before atomic publication.
+        # Native temp and the destination may be on different devices.
+        stage_path = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix='.montage-publish-',suffix='.mp4',
+                                             dir=output.parent,delete=False) as stage:
+                stage_path = Path(stage.name)
+                with pending.open('rb') as source:
+                    shutil.copyfileobj(source,stage)
+                stage.flush()
+                os.fsync(stage.fileno())
+            output.hardlink_to(stage_path)
+        finally:
+            if stage_path is not None:
+                stage_path.unlink(missing_ok=True)
     return report
 
 

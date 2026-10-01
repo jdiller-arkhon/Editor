@@ -10,3 +10,5 @@ Cinematic coverage additionally checks retimed source consumption and anchor map
 visible motion/frame changes, audio RMS/peak bounds and soundtrack spectral presence,
 measured two-pass mastering, silent-music rejection and mixed silent/audio source concat.
 Run desktop checks separately with `QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m unittest discover -s tests -p desktop_checks.py -v`.
+
+A sixteen-shot fractional-duration render guards against cumulative concat timing errors. Director cuts are quantized to output frames; concat receives explicit shot durations. The real-gameplay test recipe and credits are in TEST_MONTAGE.md.

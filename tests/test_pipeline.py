@@ -27,6 +27,8 @@ class TimelineTests(unittest.TestCase):
         candidates = [{'source':'a','time':i,'score':.8,'source_duration':30} for i in (3,9,15,21)]
         timeline = direct(candidates,{'onsets':[1,2,3,4,5,6]},'music',Settings(),6,cinematic=True)
         self.assertTrue(any(c.speed_profile=='impact' for c in timeline.clips))
+        for c in timeline.clips:
+            self.assertAlmostEqual(c.duration*Settings().fps,round(c.duration*Settings().fps))
         for clip in timeline.clips:
             self.assertAlmostEqual(source_offset(clip.duration,clip.duration,clip.speed_profile),clip.duration)
             if clip.anchor_source is not None:
@@ -65,6 +67,12 @@ class RealRenderTests(unittest.TestCase):
             timeline = Timeline.load(output.with_suffix('.timeline.json'))
             replay = render(timeline, d/'replay.mp4')
             self.assertTrue(replay['valid'])
+            # Many fractional-second shots exposed cumulative AAC/container concat drift.
+            fractional=replace(timeline,clips=[Clip(str(video),i*.5,11/24,0) for i in range(16)])
+            fractional_report=render(fractional,d/'fractional.mp4')
+            self.assertTrue(fractional_report['full_decode'])
+            self.assertAlmostEqual(fractional_report['duration'],16*11/24,delta=.08)
+
             def plan(candidates,brief):
                 return dict(candidate_order=list(reversed(range(len(candidates)))),minimum_clip=1.5,
                             maximum_clip=4,transition='fade_black',transition_duration=.2,
