@@ -4,27 +4,28 @@ from pathlib import Path
 import sys
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
-    QMessageBox, QSlider, QFrame, QStackedWidget)
+    QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect)
 
+from .workspace_widgets import CinemaCanvas, TimelineLanes
 from .config import Settings
 from .pipeline import Timeline, create_montage, render
 
 STYLE = '''
 QWidget { background:#0d0e10; color:#ededee; font-family:Inter,Segoe UI,sans-serif; font-size:12px; }
-QMainWindow {background:#090a0c;} QFrame#panel {background:#141519;border:1px solid #292b30;border-radius:12px;}
+QMainWindow {background:#090a0c;} QFrame#panel {background:qlineargradient(x1:0,y1:0,x2:0.8,y2:1,stop:0 #242831,stop:0.15 #171b22,stop:1 #101319);border:1px solid #343a45;border-radius:14px;}
 QLabel {background:transparent;} QLabel#brand {font-size:23px;font-weight:700;letter-spacing:3px;}
 QLabel#title {font-size:20px;font-weight:600;} QLabel#muted {color:#979ba4;}
 QLabel#eyebrow {color:#c9b794;font-size:10px;font-weight:600;letter-spacing:2px;}
-QPushButton {background:#202228;border:1px solid #343740;border-radius:7px;padding:9px 13px;}
+QPushButton {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #303640,stop:1 #1b2029);border:1px solid #424955;border-radius:7px;padding:9px 13px;}
 QPushButton:hover {background:#30333b;border-color:#777b86;}
 QPushButton:disabled {color:#60636c;background:#191b20;}
-QPushButton#primary {background:#e8ddc8;color:#151311;font-weight:700;border:0;padding:12px;}
+QPushButton#primary {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #fff2d5,stop:1 #bca477);color:#151311;font-weight:700;border:0;padding:12px;}
 QListWidget,QTableWidget {background:#111216;border:1px solid #2a2d34;border-radius:6px;alternate-background-color:#181a20;}
 QHeaderView::section {background:#202228;color:#aeb2bc;border:0;padding:7px;}
 QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#202228;border:1px solid #343740;border-radius:5px;padding:6px;}
@@ -46,6 +47,9 @@ def label(text, kind=None):
 def panel():
     frame = QFrame()
     frame.setObjectName('panel')
+    shadow = QGraphicsDropShadowEffect(frame)
+    shadow.setBlurRadius(22); shadow.setOffset(0,6); shadow.setColor(QColor(0,0,0,150))
+    frame.setGraphicsEffect(shadow)
     layout = QVBoxLayout(frame)
     layout.setContentsMargins(18,18,18,18)
     layout.setSpacing(12)
@@ -71,7 +75,7 @@ class Studio(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Editor • Montage Studio')
-        self.resize(1500,980)
+        self.resize(1600,1050)
         self.setMinimumSize(1100,760)
         self.music_path = None
         self.timeline = None
@@ -122,15 +126,15 @@ class Studio(QMainWindow):
         self.video = QVideoWidget()
         self.video.setMinimumHeight(280)
         self.screen = QStackedWidget()
-        empty = QWidget(); empty_layout = QVBoxLayout(empty)
-        empty_layout.addStretch()
+        empty = CinemaCanvas(); empty_layout = QVBoxLayout(empty)
+        empty_layout.addStretch(3)
         message = label('YOUR NEXT STORY STARTS HERE', 'eyebrow')
         message.setAlignment(Qt.AlignCenter); empty_layout.addWidget(message)
         message = label('From the struggle. Into the light.', 'title')
         message.setAlignment(Qt.AlignCenter); empty_layout.addWidget(message)
         message = label('Import gameplay, choose a track, then shape the message.', 'muted')
         message.setAlignment(Qt.AlignCenter); empty_layout.addWidget(message)
-        empty_layout.addStretch()
+        empty_layout.addStretch(1)
         self.screen.addWidget(empty); self.screen.addWidget(self.video)
         view.addWidget(self.screen,1)
         self.player = QMediaPlayer(self)
@@ -158,6 +162,10 @@ class Studio(QMainWindow):
         self.timeline_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.timeline_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.timeline_table.setAlternatingRowColors(True)
+        self.lanes=TimelineLanes()
+        self.lanes.seek.connect(self.seek_export)
+        self.player.positionChanged.connect(lambda t:self.lanes.set_position(t/1000))
+        track.addWidget(self.lanes)
         track.addWidget(self.timeline_table)
         track.addWidget(label('Populated from a generated or loaded timeline. Manual clip editing is planned.','muted'))
         column.addWidget(timeline,2)
@@ -252,11 +260,17 @@ class Studio(QMainWindow):
         return dict(dialogue=cues,transition=self.transition.currentData(),transition_duration=self.fade.value())
 
     def show_timeline(self,timeline):
-        self.timeline=timeline; self.replay_button.setEnabled(True)
+        self.timeline=timeline; self.lanes.set_timeline(timeline); self.replay_button.setEnabled(True)
         self.timeline_table.setRowCount(len(timeline.clips))
         for row,clip in enumerate(timeline.clips):
             for col,value in enumerate([Path(clip.source).name,f'{clip.start:.2f}s',f'{clip.duration:.2f}s',f'{clip.score:.3f}']):
                 self.timeline_table.setItem(row,col,QTableWidgetItem(value))
+
+    def seek_export(self,seconds):
+        if self.last_output and self.player.source().toLocalFile()==self.last_output:
+            self.player.setPosition(round(seconds*1000))
+        else:
+            self.status.setText('Timeline seek becomes available after exporting this project.')
 
     def load_timeline(self):
         path,_=QFileDialog.getOpenFileName(self,'Open timeline','','Timeline (*.json)')
@@ -319,3 +333,7 @@ class Studio(QMainWindow):
 def main():
     app=QApplication(sys.argv); app.setStyleSheet(STYLE)
     window=Studio(); window.show(); sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()

@@ -35,3 +35,9 @@
 - Added separate desktop CI job. Two desktop checks passed offscreen; five core/render tests passed in 13.330 seconds. Screenshot inspected and included in docs. Compile/import integrity checked.
 - Offscreen environment reports unavailable PipeWire/PulseAudio devices; audible playback not validated. Windows remains untested. No cancel/resume, manual clip editing, captions or advanced motion/speed effects yet. Loaded-timeline replay uses stored controls, not inspector edits.
 - Next: obtain accessible local reference clips for precise style breakdown, test desktop with real footage/audio on Windows, then implement measured timing/speed/transition controls.
+
+## 2026-10-01 — Custom depth and CI repair
+- Investigated failed GitHub run 36879866047: core test job passed; desktop import failed because libpulse.so.0 was missing. Added libpulse0 to Linux desktop CI dependencies; retained mandatory multimedia tests.
+- Added code-native cinematic light/cross canvas, concentric depth details, gradient panel surfaces, soft shadows and raised controls. No generated fake footage.
+- Added actual video/music/dialogue timeline lanes with time ruler and export seek. Empty lanes are clearly empty; no fabricated waveform or events. Added module launch support (`python -m montage_editor.desktop`).
+- Offscreen desktop tests pass; refreshed screenshot inspected. Audible playback and Windows remain unvalidated.
