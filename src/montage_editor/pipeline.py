@@ -13,6 +13,8 @@ import numpy as np
 from .config import Settings
 from .storytelling import DialogueCue
 from .editing import retime_filters, source_offset
+from .transitions import BLENDS, LOSSLESS, compose
+from .music_sections import choose_section
 
 LOG = logging.getLogger(__name__)
 
@@ -31,12 +33,12 @@ def probe(path):
     return {'path': str(path), 'duration': duration, 'streams': data['streams']}
 
 
-def audio_envelope(path, duration, rate=8000):
+def audio_envelope(path, duration, rate=8000, start=0):
     """Decode bounded mono chunks; memory scales with envelope, not raw audio."""
     envelope = []
-    for start in np.arange(0, duration, 30):
-        raw = run(['ffmpeg', '-v', 'error', '-ss', str(start), '-i', str(path),
-                   '-t', str(min(30, duration-start)), '-vn', '-ac', '1', '-ar', str(rate),
+    for chunk_start in np.arange(0, duration, 30):
+        raw = run(['ffmpeg', '-v', 'error', '-ss', str(start+chunk_start), '-i', str(path),
+                   '-t', str(min(30, duration-chunk_start)), '-vn', '-ac', '1', '-ar', str(rate),
                    '-f', 'f32le', 'pipe:1']).stdout
         samples = np.frombuffer(raw, dtype='<f4')
         hop = rate // 20
@@ -46,10 +48,10 @@ def audio_envelope(path, duration, rate=8000):
     return np.asarray(envelope)
 
 
-def music_analysis(media, duration):
+def music_analysis(media, duration, start=0):
     if not any(s['codec_type'] == 'audio' for s in media['streams']):
         raise ValueError('Music input must contain an audio stream')
-    energy = audio_envelope(media['path'], duration)
+    energy = audio_envelope(media['path'], duration, start=start)
     if not len(energy):
         raise ValueError('Music contains no decoded samples')
     if float(energy.max()) < 1e-5:
@@ -57,9 +59,9 @@ def music_analysis(media, duration):
     # Spectral changes reveal attacks even when overall loudness stays similar.
     rate, hop, window = 8000, 80, 512
     flux, previous = [], None
-    for start in np.arange(0, duration, 30):
-        raw = run(['ffmpeg','-v','error','-ss',str(start),'-i',media['path'],
-                   '-t',str(min(30,duration-start)),'-vn','-ac','1','-ar',str(rate),
+    for chunk_start in np.arange(0, duration, 30):
+        raw = run(['ffmpeg','-v','error','-ss',str(start+chunk_start),'-i',media['path'],
+                   '-t',str(min(30,duration-chunk_start)),'-vn','-ac','1','-ar',str(rate),
                    '-f','f32le','pipe:1']).stdout
         samples = np.frombuffer(raw,dtype='<f4')
         for offset in range(0,len(samples),hop):
@@ -78,7 +80,7 @@ def music_analysis(media, duration):
             if not peaks or t-peaks[-1]>=.25:
                 peaks.append(round(t,3))
     return {'onsets':peaks,'energy':energy.tolist(),'hop_seconds':.05,
-            'onset_hop_seconds':.01,
+            'onset_hop_seconds':.01,'source_start':start,
             'method':'positive log spectral flux; attacks, not semantic beats or downbeats'}
 
 
@@ -148,6 +150,7 @@ class Timeline:
     gameplay_gain: float = 0
     music_gain: float = 1
     normalize_audio: bool = False
+    music_start: float = 0
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -155,9 +158,11 @@ class Timeline:
         Settings(**self.settings)
         if not isinstance(self.faith_message,str) or len(self.faith_message)>140 or '\x00' in self.faith_message:
             raise ValueError('Faith message must be text of at most 140 characters')
+        if not np.isfinite(self.music_start) or self.music_start<0:
+            raise ValueError("Invalid soundtrack start")
         for gain in (self.gameplay_gain,self.music_gain):
             if not np.isfinite(gain) or not 0<=gain<=2:raise ValueError('Audio gain outside [0, 2]')
-        if self.transition not in ('cut', 'fade_black', 'fade_white', 'zoom'):
+        if self.transition not in ('cut', 'fade_black', 'fade_white', 'zoom') + BLENDS:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
@@ -217,18 +222,24 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
             last_source = clips[-1].source if clips else None
             shot_pool = sorted(ranked,key=lambda c:(c['source']==last_source,
                                                     abs(c['score']-desired),c['source'],c['time']))
-        for candidate in shot_pool:
-            if candidate['source_duration']+1e-6 < length:
-                continue
-            start = min(max(0, candidate['time']-offset), candidate['source_duration']-length)
-            starts = [start, 0.0] + [b for a,b in used[candidate['source']]]
-            starts.sort(key=lambda value: abs(value-start))
-            for proposed in starts:
-                if proposed+length > candidate['source_duration']+1e-6:
+        # Try every genuine candidate before filling an interval beside an old one.
+        for fallback in (False, True):
+            for candidate in shot_pool:
+                if candidate['source_duration']+1e-6 < length:
                     continue
-                if all(proposed+length <= a+1e-6 or proposed >= b-1e-6
-                       for a,b in used[candidate['source']]):
-                    choice = (candidate, proposed)
+                start = min(max(0, candidate['time']-offset), candidate['source_duration']-length)
+                starts = ([0.0] + [b for a,b in used[candidate['source']]]) if fallback else [start]
+                if not fallback and abs(start+offset-candidate['time'])>1e-5:
+                    continue
+                starts.sort(key=lambda value: abs(value-start))
+                for proposed in starts:
+                    if proposed+length > candidate['source_duration']+1e-6:
+                        continue
+                    if all(proposed+length <= a+1e-6 or proposed >= b-1e-6
+                           for a,b in used[candidate['source']]):
+                        choice = (candidate, proposed)
+                        break
+                if choice is not None:
                     break
             if choice is not None:
                 break
@@ -284,13 +295,19 @@ def render(timeline, output):
     if output.exists():
         raise FileExistsError(f'Refusing to replace existing output: {output}')
     output.parent.mkdir(parents=True, exist_ok=True)
+    source_quality = []
     for clip in timeline.clips:
         media = probe(clip.source)
+        video = next(s for s in media['streams'] if s['codec_type']=='video')
+        if video.get('color_transfer') in ('smpte2084','arib-std-b67'):
+            raise ValueError('HDR source requires a tone-mapping workflow; this renderer supports SDR')
+        source_quality.append(dict(source=clip.source,width=video['width'],height=video['height'],
+            delivery_upscaled=settings.width>video['width'] and settings.height>video['height']))
         if clip.start+clip.duration > media['duration']+.01:
             raise ValueError('Timeline exceeds source duration')
     music = probe(timeline.music)
     duration = sum(c.duration for c in timeline.clips)
-    if music['duration']+.01 < duration:
+    if music['duration']+.01 < timeline.music_start+duration:
         raise ValueError('Music is shorter than timeline')
     for cue in timeline.dialogue:
         voice = probe(cue.source)
@@ -319,7 +336,7 @@ def render(timeline, output):
             media=probe(clip.source)
             has_audio=any(s['codec_type']=='audio' for s in media['streams'])
             graph=retime_filters(clip.duration,clip.speed_profile,has_audio)
-            video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease,'
+            video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,'
                           f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
                           f'fps={settings.fps},tpad=stop_mode=clone:stop_duration=0.2,trim=duration={clip.duration}')
             if timeline.transition=='zoom':
@@ -334,15 +351,19 @@ def render(timeline, output):
                 graph.append(f'anullsrc=r=48000:cl=stereo,atrim=duration={clip.duration}[aout]')
             run(['ffmpeg','-v','error','-ss',str(clip.start),'-i',clip.source,
                  '-filter_complex_threads','1','-filter_complex',';'.join(graph),'-map','[vout]','-map','[aout]',
-                 '-t',str(clip.duration),'-c:v','libx264','-preset','fast','-crf','18','-pix_fmt','yuv420p',
-                 '-c:a','aac','-b:a','192k','-threads','2',str(temporary/f'{i:05d}.mp4')],cwd=temporary)
+                 '-t',str(clip.duration)] + LOSSLESS + [str(temporary/f'{i:05d}.mkv')],cwd=temporary)
+        pieces = [(temporary/f'{i:05d}.mkv',clip.duration) for i,clip in enumerate(timeline.clips)]
+        boundaries = []
+        if timeline.transition in BLENDS and len(pieces)>1:
+            LOG.info('Compositing %d transition boundaries',len(pieces)-1)
+            pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
+                                        timeline.transition,timeline.transition_duration,temporary,run)
         listing = temporary/'clips.txt'
-        listing.write_text(''.join(f"file '{i:05d}.mp4'\nduration {clip.duration:.9f}\n"
-                                    for i,clip in enumerate(timeline.clips)))
+        listing.write_text(''.join(f"file '{path.name}'\nduration {length:.9f}\n" for path,length in pieces))
         pending = temporary/'final.mp4'
         fade = min(1, duration/4)
         inputs = ['ffmpeg', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing),
-                  '-i', timeline.music]
+                  '-ss',str(timeline.music_start),'-i', timeline.music]
         filters = [f'[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,'
                    f'afade=t=in:d={fade},afade=t=out:st={duration-fade}:d={fade},volume={timeline.music_gain}[music]']
         filters.append(f'[0:a]volume={timeline.gameplay_gain}[game]')
@@ -379,13 +400,21 @@ def render(timeline, output):
             mastering = 'loudnorm=I=-16:TP=-1.5:LRA=11:linear=true:'+':'.join(
                 f'{key}={values[value]}' for key,value in keys.items())+','
         filters.append('[mixed]'+mastering+'alimiter=limit=0.95:level=0:latency=1,aresample=48000[audio]')
-        run(inputs + ['-filter_complex', ';'.join(filters), '-map', '0:v:0', '-map', '[audio]',
-                      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', str(duration),
+        crf,preset = {'draft':('23','fast'),'high':('16','slow'),'master':('12','slow')}[settings.quality]
+        run(inputs + ['-filter_complex_threads','1','-filter_complex', ';'.join(filters), '-map', '0:v:0', '-map', '[audio]',
+                      '-c:v','libx264','-crf',crf,'-preset',preset,'-pix_fmt','yuv420p','-threads','2',
+                      '-c:a', 'aac', '-b:a', '320k', '-t', str(duration),
+                      '-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709','-color_range','tv',
                       '-movflags', '+faststart', str(pending)])
         report = validate_output(pending, settings, duration)
         report['audio_mastering'] = 'measured two-pass loudnorm' if timeline.normalize_audio else 'peak limiter'
         report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips})
+        report['music_start'] = timeline.music_start
         report['transition'] = timeline.transition
+        report['transition_boundaries'] = boundaries
+        report['render_quality'] = dict(preset=settings.quality,crf=int(crf),encoder_preset=preset,
+                                      intermediates='lossless FFV1 / PCM',audio_bitrate=320000,
+                                      sources=source_quality)
         # Publish only after successful validation; hard link refuses concurrent overwrites.
         # Copy sequentially into the destination filesystem before atomic publication.
         # Native temp and the destination may be on different devices.
@@ -416,7 +445,12 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         raise ValueError('Duplicate gameplay inputs')
     song = probe(music)
     duration = min(settings.duration, song['duration'])
-    analysis = music_analysis(song, duration)
+    music_start = 0.0
+    if story and story.get('auto_music_section'):
+        LOG.info('Selecting an energetic section of the chosen soundtrack')
+        envelope = audio_envelope(song['path'],song['duration'])
+        music_start = choose_section(envelope,song['duration'],duration)
+    analysis = music_analysis(song, duration, start=music_start)
     candidates = []
     for source in sources:
         LOG.info('Analyzing %s', source['path'])
@@ -430,6 +464,8 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         ai_plan = {'provider':'ollama','model':ai_model,'plan':plan,
                    'evidence':'motion/audio metadata only; no visual semantic analysis'}
     timeline = direct(candidates, analysis, song['path'], settings, duration, ordered=bool(ai_model),cinematic=bool(story and story.get('edit_profile')=='cinematic'))
+    from dataclasses import replace
+    timeline = replace(timeline,music_start=music_start)
     if ai_plan:
         from dataclasses import replace
         timeline = replace(timeline,transition=plan['transition'],transition_duration=plan['transition_duration'])

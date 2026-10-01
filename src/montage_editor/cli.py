@@ -21,6 +21,7 @@ def main():
     create.add_argument('--ollama-model', help='Installed local Ollama model for experimental automatic direction')
     create.add_argument('--brief', help='Creative brief for the local director')
     create.add_argument('--story', help='JSON dialogue cues and transition settings')
+    create.add_argument('--quality',choices=['draft','high','master'],default='high')
     create.add_argument('--fps', type=int, default=30)
     replay = commands.add_parser('render', help='Render a saved timeline')
     replay.add_argument('timeline')
@@ -33,7 +34,7 @@ def main():
         elif args.command == 'render':
             result = render(Timeline.load(args.timeline), args.output)
         else:
-            settings = Settings(width=args.width, height=args.height, fps=args.fps, duration=args.duration)
+            settings = Settings(width=args.width, height=args.height, fps=args.fps, duration=args.duration,quality=args.quality)
             story = None
             if args.story:
                 from pathlib import Path

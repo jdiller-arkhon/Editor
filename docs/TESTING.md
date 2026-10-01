@@ -12,3 +12,9 @@ measured two-pass mastering, silent-music rejection and mixed silent/audio sourc
 Run desktop checks separately with `QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m unittest discover -s tests -p desktop_checks.py -v`.
 
 A sixteen-shot fractional-duration render guards against cumulative concat timing errors. Director cuts are quantized to output frames; concat receives explicit shot durations. The real-gameplay test recipe and credits are in TEST_MONTAGE.md.
+
+Composite tests render all five blend modes. Red/blue fixtures verify both images contribute
+at a boundary and that original cut time/duration remain unchanged. A two-frequency song fixture
+verifies that automatic excerpt selection and actual rendered audio use the same offset.
+The desktop quick-create test verifies real generator arguments (1080p, high quality, cinematic
+transitions, mastering and automatic song-section selection), preventing disconnected controls.

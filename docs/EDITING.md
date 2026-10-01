@@ -18,6 +18,9 @@ Occasional impact shots use three piecewise speeds: 1.4×, 0.6×, 1.4×, occupyi
 atempo. These are stepped ramps, not smooth velocity curves. Slowed low-frame-rate input can
 judder; no optical flow is claimed. A bounded 6% centered zoom at shot edges is a motion treatment,
 not a blended transition. Its decay follows transition_duration. Black/white fades remain optional.
+Separate composited transitions (`cinematic`, `push`, `zoom_blend`, `blur`, `dissolve`)
+now replace each cut neighbourhood with two-image blends using held-frame edge handles.
+The cut stays at the same musical time, and total duration is preserved.
 
 All intermediate shots retain audio, or a stereo silent track for silent video inputs.
 Music and gameplay gains are independently configurable in [0,2]. Narration is mixed from

@@ -10,7 +10,7 @@ from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
+    QLabel, QPushButton, QCheckBox, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
     QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea, QInputDialog)
 
@@ -260,17 +260,25 @@ class Studio(QMainWindow):
         form.addRow('Creative brief',self.ai_brief)
 
         self.transition = QComboBox()
-        for title,key in [('Hard cut','cut'),('Fade through black','fade_black'),('Fade through white','fade_white'),('Motion zoom','zoom')]:
+        for title,key in [('Hard cut','cut'),('Fade through black','fade_black'),('Fade through white','fade_white'),('Motion zoom','zoom'),('Cinematic blend sequence','cinematic'),('Smooth push','push'),('Zoom blend','zoom_blend'),('Blur blend','blur'),('Dissolve','dissolve')]:
             self.transition.addItem(title,key)
         form.addRow('Transition',self.transition)
         self.fade = QDoubleSpinBox(); self.fade.setRange(.05,1); self.fade.setSingleStep(.05); self.fade.setValue(.2)
-        form.addRow('Fade seconds',self.fade)
+        form.addRow('Transition seconds',self.fade)
         self.duration = QDoubleSpinBox(); self.duration.setRange(1,3600); self.duration.setValue(30)
         form.addRow('Target seconds',self.duration)
         self.resolution = QComboBox()
         for title,size in [('HD • 1280 × 720',(1280,720)),('Full HD • 1920 × 1080',(1920,1080)),('Portrait • 1080 × 1920',(1080,1920))]:
             self.resolution.addItem(title,size)
+        self.resolution.setCurrentIndex(1)
         form.addRow('Canvas',self.resolution)
+        self.quality = QComboBox()
+        for title,key in [('High quality','high'),('Master quality • larger files','master'),('Draft • fast preview','draft')]:
+            self.quality.addItem(title,key)
+        form.addRow('Render quality',self.quality)
+        self.auto_music_section = QCheckBox('Choose an energetic section of my song')
+        self.auto_music_section.setChecked(True)
+        form.addRow(self.auto_music_section)
         self.fps = QSpinBox(); self.fps.setRange(1,120); self.fps.setValue(30)
         form.addRow('Frames / second',self.fps)
         form_widget=QWidget();form_widget.setLayout(form);form_widget.setMinimumHeight(350)
@@ -477,12 +485,13 @@ class Studio(QMainWindow):
                 operation=lambda:render(timeline,path)
             else:
                 width,height=self.resolution.currentData()
-                settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value())
+                settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value(),quality=self.quality.currentData())
                 sources=[self.footage.item(i).text() for i in range(self.footage.count())]
                 song=self.music_path; story=self.story()
                 if automatic:
                     story.update(faith_message='Walk with Christ.',edit_profile='cinematic',
-                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='zoom')
+                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',
+                                 auto_music_section=self.auto_music_section.isChecked())
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
                 if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or None

@@ -14,3 +14,8 @@ The `editing.py` module defines output-to-source timing and matched video/audio 
 Timeline clip profiles and anchor metadata remain backward compatible through defaults.
 The renderer retains gameplay audio through concat, mixes music/voice/gameplay, then optionally
 performs measured two-pass mastering. See EDITING.md for exact quality limits.
+
+`transitions.py` composes bounded two-shot pieces around unchanged cut centers. `music_sections.py`
+selects a measured energetic song excerpt. Timeline music_start and quality persist through replay.
+Video/audio intermediates are FFV1/PCM; the final delivery encode is the sole lossy encode after
+processing. See RENDERING.md for memory/disk requirements and source-detail/color limitations.

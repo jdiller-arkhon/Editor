@@ -25,3 +25,12 @@ in the real-footage test. After validation, sequentially copy into a destination
 flush/fsync and hard-link the final path without replacing existing files. Remove the stage
 on success/failure. This also handles different source/destination filesystems without publishing
 an incomplete export. Temporary storage needs sufficient space for encoded shots and final video.
+
+## 2026-10-01 — Generator quality instead of sample post-processing
+
+The user's priority is automatic generation quality. Implement shared engine improvements:
+lossless intermediates and one delivery encode; bounded pair compositing with fixed musical
+cut centers; candidate-first selection before fallback filling; source-detail/upscaling reporting;
+energetic local-song excerpt selection with persistent offsets. Use held edge handles explicitly
+rather than silently repeating extra footage. Reject known HDR sources until tone mapping exists.
+Do not equate CRF/1080p with native detail, semantic editing judgment or studio-quality validation.

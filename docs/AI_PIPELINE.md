@@ -14,9 +14,9 @@ Without `--ollama-model`, the existing automatic activity engine runs without a 
 
 ## Implemented, experimental scope
 
-Ollama receives up to 120 activity-ranked candidate records with anonymous source IDs, timestamps, source durations and motion/audio scores. No footage, audio, frames or local filenames are sent to the model. It prioritizes candidates, sets global clip-length bounds and chooses cut/black fade/white fade plus duration. The director preserves actual scores, appends unranked candidates and fits non-overlapping source clips to musical onsets. Original requested duration remains the target; limited footage may shorten output. Dialogue remains user-provided and timed; AI settings override manual transition/pacing for new generation.
+Ollama receives up to 120 activity-ranked candidate records with anonymous source IDs, timestamps, source durations and motion/audio scores. No footage, audio, frames or local filenames are sent to the model. It prioritizes candidates, sets global clip-length bounds and chooses implemented cut, fade, zoom, push, blur, dissolve or cinematic compositing plus duration. The director preserves actual scores, appends unranked candidates and fits non-overlapping source clips to musical onsets. Original requested duration remains the target; limited footage may shorten output. Dialogue remains user-provided and timed; AI settings override manual transition/pacing for new generation.
 
-This is metadata-driven direction, not visual understanding. Models cannot recognize kills, inspect Christianity-related visuals, add absent effects, synthesize dialogue or verify theology. There is no TTS, automatic reference import, speed ramp/compositing renderer, self-improvement loop or studio-quality guarantee.
+This is metadata-driven direction, not visual understanding. Models cannot recognize kills, inspect Christianity-related visuals, add absent effects, synthesize dialogue or verify theology. There is no TTS, automatic reference import, semantic effect planning, self-improvement loop or studio-quality guarantee.
 
 ## Validation boundary and failure behavior
 
@@ -28,7 +28,7 @@ The `.analysis.json` sidecar records provider, model, validated plan and evidenc
 
 ## Tests and evidence
 
-Eight core tests, including mocked structured transport, invalid/duplicate/unknown plan rejection, connection-error behavior and actual MP4 rendering from a mocked director plan. Three desktop checks cover controls, reference artwork and worker behavior. Live Ollama/model inference is not tested in this environment because Ollama is absent. Do not label mocked tests as proof of model quality.
+Core tests, including mocked structured transport, invalid/duplicate/unknown plan rejection, connection-error behavior and actual MP4 rendering from a mocked director plan. Desktop checks cover controls, reference artwork and worker behavior. Live Ollama/model inference is not tested in this environment because Ollama is absent. Do not label mocked tests as proof of model quality.
 
 ## Official API references
 
@@ -43,3 +43,9 @@ Vision-based event evidence, confidence labeling, voice transcription and timing
 ## Low-interaction desktop mode
 
 The home screen now exposes drop clips, song title and Create Christian montage. Music folder and local model are configured once and remembered using OS QSettings. Advanced controls can be reopened. Quick-create exports automatically to a unique OS Movies/Videos/DRIFT filename and adds an original closing title. Music-title lookup is local filename matching only. No streaming/downloading provider or TTS is implemented. Missing model inference still fails explicitly rather than silently presenting a baseline result as AI.
+
+Quick-create now uses the shared lossless processing/high-quality delivery engine and an
+energetic excerpt of the selected local song. Excerpt selection measures energy/variation,
+not lyrics or phrases. The recorded music_start offset is used consistently in analysis,
+rendering and replay. Advanced can disable automatic excerpt selection. Local-model ranking
+continues to take precedence; its transition choice still must pass the implemented allowlist.

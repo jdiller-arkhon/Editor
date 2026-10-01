@@ -34,6 +34,7 @@ class TimelineTests(unittest.TestCase):
             if clip.anchor_source is not None:
                 self.assertAlmostEqual(clip.start+source_offset(clip.anchor_output,clip.duration,
                                        clip.speed_profile),clip.anchor_source)
+        self.assertEqual(sum(c.anchor_source is not None for c in timeline.clips),len(timeline.clips))
         with self.assertRaises(ValueError):
             replace(timeline,gameplay_gain=float('nan')).validate()
 

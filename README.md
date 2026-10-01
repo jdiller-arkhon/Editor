@@ -6,7 +6,7 @@ A local, personal-use gaming montage engine. The first working vertical slice im
 
 | Status | Features |
 | --- | --- |
-| IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, CPU H.264/AAC rendering, letterboxing, audio fades, gameplay mixing, measured two-pass loudness normalization, narration sidechain ducking, restrained zoom transitions, piecewise speed ramps, output validation, configuration, hardware/FFmpeg discovery, integration tests |
+| IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, lossless intermediate processing and single-delivery-encode H.264/AAC rendering, letterboxing, audio fades, gameplay mixing, measured two-pass loudness normalization, narration sidechain ducking, restrained zoom transitions, piecewise speed ramps, output validation, configuration, hardware/FFmpeg discovery, integration tests |
 | EXPERIMENTAL | Spectral-flux attack detection and activity-based narrative pacing/peak alignment; these are heuristic signals, not semantic game understanding or reliable beat tracking |
 | PLANNED | Advanced desktop editing, semantic kills/events, game adapters, learned AI director, reference-style analysis, optical-flow transitions, smooth velocity curves, semantic sound design, GPU render validation, Windows installer |
 
@@ -14,7 +14,7 @@ This version provides a command-line engine and an initial desktop workspace; it
 
 ## Requirements
 
-Python 3.11+, NumPy 1.24–2.x, FFmpeg and FFprobe on PATH with libx264 and AAC encoding. Windows 10/11 or Linux. No GPU, paid API or downloaded AI model is required. GPU discovery does not validate GPU rendering. Windows execution is not yet tested; Linux CPU rendering is tested. Use adequate disk space for temporary encoded clips and final exports. Analysis decodes low-resolution frames in 30-second chunks; long videos still take time and signal arrays scale with duration.
+Python 3.11+, NumPy 1.24–2.x, FFmpeg and FFprobe on PATH with libx264, FFV1, PCM and AAC encoding, plus xfade, drawtext and loudnorm filters. Windows 10/11 or Linux. No GPU, paid API or downloaded AI model is required. GPU discovery does not validate GPU rendering. Windows execution is not yet tested; Linux CPU rendering is tested. Use adequate disk space for temporary encoded clips and final exports. Analysis decodes low-resolution frames in 30-second chunks; long videos still take time and signal arrays scale with duration.
 
 ## Install and run
 
@@ -33,7 +33,7 @@ Quote paths containing spaces. Install FFmpeg separately and verify `ffmpeg -ver
 
 ## Editing and exports
 
-The renderer exports H.264 video (CRF 18), AAC music (192 kbps), fixed dimensions and frame rate, preserving source aspect ratio with black bars. Gameplay audio is analyzed and can be mixed at a configurable gain. Simple mode uses 25% gameplay and 80% music before measured two-pass mastering toward −16 LUFS / −1.5 dBTP and a peak limiter. Narration ducks the music with attack/release smoothing. Clips cut near detected musical attacks and align activity peaks inside shots where source bounds permit. The engine uses unused source intervals around activity candidates when necessary; requested duration may shorten when footage or music is insufficient. The validation report records shortening.
+The renderer exports H.264 video (High: CRF 16 / slow; Master: CRF 12 / slow; Draft: CRF 23 / fast), AAC music (320 kbps), fixed dimensions and frame rate, preserving source aspect ratio with black bars. Gameplay audio is analyzed and can be mixed at a configurable gain. Simple mode uses 25% gameplay and 80% music before measured two-pass mastering toward −16 LUFS / −1.5 dBTP and a peak limiter. Narration ducks the music with attack/release smoothing. Clips cut near detected musical attacks and align activity peaks inside shots where source bounds permit. The engine uses unused source intervals around activity candidates when necessary; requested duration may shorten when footage or music is insufficient. The validation report records shortening.
 
 Outputs include `.timeline.json`, `.analysis.json`, and `.validation.json`. Timelines reference absolute local media paths; they do not embed media or upload it. You can edit a timeline JSON and replay it. Validation checks audio/video streams, dimensions, frame rate, duration and full decode; it does not assess artistic quality or accurately recognized gameplay events.
 
@@ -98,3 +98,22 @@ CLI story JSON can opt in with `"edit_profile":"cinematic"`, `"transition":"zoom
 `"gameplay_gain":0.25`, `"music_gain":0.8`, `"normalize_audio":true`.
 See [editing and audio](docs/EDITING.md) for constraints and quality checks.
 These are tested editing tools, not verified studio-quality creative judgment.
+
+## Composited transitions and export quality
+
+Simple mode now defaults to Full HD and a cinematic mix of smooth pushes, zoom blends,
+blur blends and directional transitions. Advanced controls offer each effect individually
+plus dissolve. These actually blend two images around the existing cut; musical cut times
+and total duration remain fixed. Brief held-frame handles avoid consuming extra source footage.
+
+FFV1/PCM intermediates are lossless; one final H.264 encode uses the selected quality preset.
+Lanczos resizing and BT.709 SDR delivery metadata are explicit. Known HDR sources are rejected
+until tone mapping is implemented. Source size and upscaling are recorded in validation metadata:
+1080p delivery of a smaller source cannot create native 1080p detail.
+CLI supports `--quality high`, `--quality master` or `--quality draft`.
+Lossless processing needs more temporary storage and CPU time. See [rendering](docs/RENDERING.md).
+
+Quick-create can automatically choose an energetic excerpt of your selected local song.
+The Advanced checkbox disables this when you want the original opening. Song selection remains
+local filename matching; no songs are downloaded. The excerpt algorithm measures energy and
+variation, not lyrical meaning or musical phrases. Its source offset persists in projects.

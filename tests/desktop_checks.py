@@ -1,5 +1,6 @@
 """Run explicitly in the desktop CI job with QT_QPA_PLATFORM=offscreen."""
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 from PySide6.QtCore import QSettings
@@ -52,6 +53,25 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(restored.music_folder,d)
             self.assertTrue(restored.inspector_scroll.isHidden())
             restored.close()
+
+    def test_quick_create_connects_quality_and_cinematic_engine(self):
+        window=Studio()
+        window.director_mode.setCurrentIndex(0)
+        window.footage.addItem('clip.mp4');window.music_path='song.wav'
+        with patch.object(window,'resolve_song',return_value=True), \
+             patch('montage_editor.desktop.RenderJob') as job, \
+             patch('montage_editor.desktop.create_montage') as create:
+            window.export(automatic=True)
+            operation=job.call_args.args[0]
+            operation()
+            settings,story=create.call_args.args[3:5]
+            self.assertEqual((settings.width,settings.height),(1920,1080))
+            self.assertEqual(settings.quality,'high')
+            self.assertEqual(story['transition'],'cinematic')
+            self.assertTrue(story['auto_music_section'])
+            self.assertTrue(story['normalize_audio'])
+        window.job=None
+        window.close()
 
     def test_background_job_reports_failures(self):
         errors=[]
