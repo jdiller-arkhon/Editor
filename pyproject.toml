@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "universal-gaming-montage-editor"
+version = "0.1.0"
+description = "Local, game-independent montage analysis and rendering"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24,<3"]
+
+[project.scripts]
+montage-editor = "montage_editor.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
