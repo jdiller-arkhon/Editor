@@ -13,7 +13,7 @@ def detect_environment():
         output = subprocess.run([result["ffmpeg"], "-hide_banner", "-encoders"],
                                 capture_output=True, text=True, timeout=15, check=True)
         result["encoders"] = [line.split()[1] for line in output.stdout.splitlines()
-                              if len(line.split()) > 1 and line.startswith(" V")]
+                              if len(line.split()) > 1 and line.startswith(" V") and line.split()[1] != "="]
     nvidia = shutil.which("nvidia-smi")
     if nvidia:
         output = subprocess.run([nvidia, "--query-gpu=name", "--format=csv,noheader"],
