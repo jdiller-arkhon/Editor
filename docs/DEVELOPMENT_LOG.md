@@ -48,3 +48,10 @@
 - Implemented separate background Analyze action returning real motion/audio candidates and displaying top activity/time; score explicitly not semantic confidence. Preserved working import/music/dialogue/render workflows. Unimplemented AI Director/Color/Styles navigation disabled.
 - Source library reveals after media import; initial home layout prioritizes the reference composition. Actual timeline lanes remain connected to stored data. Empty preview is clearly empty; no fabricated gameplay/waveforms.
 - Validation: three offscreen desktop checks passed; compileall passed; built wheel and verified packaged cathedral asset; final screenshot inspected. Windows/device playback remain unvalidated. Advanced effect and semantic AI controls from reference still planned.
+
+## 2026-10-01 — Optional Ollama automatic director
+- User requested minimal involvement and local AI-driven editing. Verified current Ollama API documentation.
+- Added loopback structured-JSON director, independent plan validation, prioritized candidates, global pacing and supported transitions. Connected CLI (--ollama-model/--brief) and desktop mode/model/brief controls. Automatic FFmpeg pipeline executes and validates plans; no model-generated commands or asset paths.
+- Records provider/model/plan in analysis sidecar. Missing/invalid Ollama fails explicitly rather than falsely claiming AI operation. Existing heuristic mode and timeline replay retained.
+- Tests: eight core tests passed in 8.153s, including transport mock, invalid-plan rejection and actual MP4 from mocked AI plan. Three desktop checks passed. Ollama binary/service absent, so live inference and model quality remain unvalidated.
+- Added scrolling inspector to preserve readable controls after adding AI settings. Advanced vision, TTS, reference selection, speed ramps and autonomous quality iteration remain planned.

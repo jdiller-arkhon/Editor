@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 from dataclasses import replace
 import numpy as np
 from montage_editor.storytelling import DialogueCue
@@ -51,6 +52,16 @@ class RealRenderTests(unittest.TestCase):
             timeline = Timeline.load(output.with_suffix('.timeline.json'))
             replay = render(timeline, d/'replay.mp4')
             self.assertTrue(replay['valid'])
+            def plan(candidates,brief):
+                return dict(candidate_order=list(reversed(range(len(candidates)))),minimum_clip=1.5,
+                            maximum_clip=4,transition='fade_black',transition_duration=.2,
+                            rationale='Measured activity progression'),candidates
+            with patch('montage_editor.ai_director.OllamaDirector.plan',side_effect=plan):
+                ai_report=create_montage([video],music,d/'ai.mp4',
+                    Settings(width=320,height=180,fps=24,duration=6),ai_model='mock-model')
+            self.assertEqual(ai_report['ai_director'],'ollama')
+            self.assertTrue(ai_report['full_decode'])
+            self.assertEqual(Timeline.load(d/'ai.timeline.json').transition,'fade_black')
             story = replace(timeline, dialogue=[DialogueCue(str(music), 1, 0, 2,
                             reference='Original narration inspired by Christian hope')],
                             transition='fade_black')

@@ -10,7 +10,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
-    QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect)
+    QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea)
 
 from .workspace_widgets import CinemaCanvas, TimelineLanes, CathedralBanner
 from .config import Settings
@@ -95,7 +95,7 @@ class Studio(QMainWindow):
         rail_layout.addWidget(label('MONTAGE STUDIO','eyebrow'))
         rail_layout.addSpacing(22)
         for name,callback in [('Home',lambda:self.screen.setCurrentIndex(0)),
-                              ('Import',self.import_media),('AI Director',None),
+                              ('Import',self.import_media),('AI Director',lambda:self.ai_model.setFocus()),
                               ('Timeline',lambda:self.timeline_table.setFocus()),
                               ('Effects',lambda:self.transition.setFocus()),
                               ('Audio',self.import_music),('Color',None),('Styles',None),
@@ -228,6 +228,16 @@ class Studio(QMainWindow):
         delete.clicked.connect(lambda:self.dialogue.removeRow(self.dialogue.currentRow()))
         right.addWidget(delete)
         form = QFormLayout()
+        self.director_mode=QComboBox()
+        self.director_mode.addItems(['Automatic • activity engine','Automatic • Ollama (experimental)'])
+        form.addRow('Director',self.director_mode)
+        self.ai_model=QLineEdit();self.ai_model.setPlaceholderText('Installed Ollama model name')
+        self.ai_model.setEnabled(False)
+        self.director_mode.currentIndexChanged.connect(lambda i:self.ai_model.setEnabled(i==1))
+        form.addRow('Local model',self.ai_model)
+        self.ai_brief=QLineEdit();self.ai_brief.setPlaceholderText('Cinematic Christian hope and perseverance')
+        form.addRow('Creative brief',self.ai_brief)
+
         self.transition = QComboBox()
         for title,key in [('Hard cut','cut'),('Fade through black','fade_black'),('Fade through white','fade_white')]:
             self.transition.addItem(title,key)
@@ -242,7 +252,8 @@ class Studio(QMainWindow):
         form.addRow('Canvas',self.resolution)
         self.fps = QSpinBox(); self.fps.setRange(1,120); self.fps.setValue(30)
         form.addRow('Frames / second',self.fps)
-        right.addLayout(form)
+        form_widget=QWidget();form_widget.setLayout(form);form_widget.setMinimumHeight(350)
+        right.addWidget(form_widget)
         right.addStretch()
         right.addWidget(label('H.264 / AAC  •  CPU RENDER','eyebrow'))
         self.export_button = QPushButton('Generate and export montage'); self.export_button.setObjectName('primary')
@@ -255,7 +266,9 @@ class Studio(QMainWindow):
         self.open_button = QPushButton('Open export folder')
         self.open_button.setEnabled(False); self.open_button.clicked.connect(self.open_export)
         right.addWidget(self.open_button)
-        workspace.addWidget(inspector)
+        inspector.setMinimumHeight(960)
+        inspector_scroll=QScrollArea();inspector_scroll.setWidgetResizable(True);inspector_scroll.setWidget(inspector)
+        inspector_scroll.setMinimumWidth(360);workspace.addWidget(inspector_scroll)
         workspace.setSizes([220,1000,400])
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
         layout.addWidget(self.progress)
@@ -362,7 +375,10 @@ class Studio(QMainWindow):
                 settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value())
                 sources=[self.footage.item(i).text() for i in range(self.footage.count())]
                 song=self.music_path; story=self.story()
-                operation=lambda:create_montage(sources,song,path,settings,story)
+                model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
+                if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
+                brief=self.ai_brief.text().strip() or None
+                operation=lambda:create_montage(sources,song,path,settings,story,model,brief)
         except Exception as error:
             QMessageBox.warning(self,'Check story settings',str(error)); return
         self.export_button.setEnabled(False); self.replay_button.setEnabled(False)

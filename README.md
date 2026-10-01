@@ -66,4 +66,10 @@ Desktop controls are tested offscreen on Linux; physical audio playback and Wind
 
 Linux desktop dependencies include `libegl1`, `libgl1`, `libopengl0` and `libpulse0` (Ubuntu packages). The desktop CI explicitly installs these; missing `libpulse0` caused the initial desktop run failure. Launch with `montage-studio` or `python -m montage_editor.desktop` after installing the desktop extra. The custom workspace now includes layered surfaces and actual timeline lanes. Timeline seeking applies to the rendered export, not unrendered source sequences.
 
-The desktop now follows the supplied DRIFT visual reference with an original packaged cathedral backdrop, monochrome navigation and five workflow cards. Analyze independently measures gameplay motion/audio and reports candidate activity (not kill confidence). The source library appears after import. AI Director, Color and Styles navigation are disabled until implemented.
+The desktop now follows the supplied DRIFT visual reference with an original packaged cathedral backdrop, monochrome navigation and five workflow cards. Analyze independently measures gameplay motion/audio and reports candidate activity (not kill confidence). The source library appears after import. AI Director opens local director settings; Color and Styles navigation remain disabled until implemented.
+
+## Automatic local AI director (experimental)
+
+Select **Automatic • Ollama** in the desktop, enter an installed local model name and optionally a creative brief, then Generate. Or add `--ollama-model YOUR_INSTALLED_MODEL --brief "Cinematic Christian hope and perseverance"` to CLI create. Ollama ranks activity candidates and chooses pacing/supported transitions; the engine handles analysis, timeline, render and validation. Install Ollama and a local model separately. The activity baseline remains available without AI.
+
+This integration is tested with mocked responses and real resulting renders; live model inference is not validated here. It receives metadata, not video frames, and cannot yet recognize events or create narration/advanced effects. See [AI pipeline](docs/AI_PIPELINE.md) for setup and exact limitations.

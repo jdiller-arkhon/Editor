@@ -151,10 +151,10 @@ class Timeline:
         return result
 
 
-def direct(candidates, music, music_path, settings, duration):
+def direct(candidates, music, music_path, settings, duration, ordered=False):
     if not candidates:
         raise ValueError('No candidate moments')
-    ranked = sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time']))
+    ranked = candidates if ordered else sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time']))
     clips = []
     used = {c['source']: [] for c in ranked}
     position = 0.0
@@ -286,7 +286,7 @@ def render(timeline, output):
     return report
 
 
-def create_montage(gameplay, music, output, settings, story=None):
+def create_montage(gameplay, music, output, settings, story=None, ai_model=None, brief=None):
     output = Path(output).resolve()
     sidecars = [output.with_suffix('.timeline.json'), output.with_suffix('.analysis.json'),
                 output.with_suffix('.validation.json')]
@@ -302,15 +302,27 @@ def create_montage(gameplay, music, output, settings, story=None):
     for source in sources:
         LOG.info('Analyzing %s', source['path'])
         candidates.extend(analyze_gameplay(source, settings))
-    timeline = direct(candidates, analysis, song['path'], settings, duration)
+    ai_plan = None
+    if ai_model:
+        from .ai_director import OllamaDirector, configure_plan, DEFAULT_BRIEF
+        LOG.info('Requesting local Ollama director plan')
+        plan,pool = OllamaDirector(ai_model).plan(candidates,brief or DEFAULT_BRIEF)
+        candidates,settings = configure_plan(plan,pool,settings)
+        ai_plan = {'provider':'ollama','model':ai_model,'plan':plan,
+                   'evidence':'motion/audio metadata only; no visual semantic analysis'}
+    timeline = direct(candidates, analysis, song['path'], settings, duration, ordered=bool(ai_model))
+    if ai_plan:
+        from dataclasses import replace
+        timeline = replace(timeline,transition=plan['transition'],transition_duration=plan['transition_duration'])
     if story is not None:
         from dataclasses import replace
         timeline = replace(timeline, dialogue=[DialogueCue(**c) for c in story.get('dialogue', [])],
-                           transition=story.get('transition', 'cut'),
-                           transition_duration=story.get('transition_duration', .2))
+                           transition=story.get('transition', timeline.transition) if not ai_model else timeline.transition,
+                           transition_duration=story.get('transition_duration', timeline.transition_duration) if not ai_model else timeline.transition_duration)
     report = render(timeline, output)
     timeline.save(sidecars[0])
-    sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates}, indent=2))
+    sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan}, indent=2))
+    report['ai_director'] = 'ollama' if ai_model else 'heuristic'
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
     sidecars[2].write_text(json.dumps(report, indent=2))
