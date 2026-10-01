@@ -73,3 +73,15 @@ The desktop now follows the supplied DRIFT visual reference with an original pac
 Select **Automatic • Ollama** in the desktop, enter an installed local model name and optionally a creative brief, then Generate. Or add `--ollama-model YOUR_INSTALLED_MODEL --brief "Cinematic Christian hope and perseverance"` to CLI create. Ollama ranks activity candidates and chooses pacing/supported transitions; the engine handles analysis, timeline, render and validation. Install Ollama and a local model separately. The activity baseline remains available without AI.
 
 This integration is tested with mocked responses and real resulting renders; live model inference is not validated here. It receives metadata, not video frames, and cannot yet recognize events or create narration/advanced effects. See [AI pipeline](docs/AI_PIPELINE.md) for setup and exact limitations.
+
+## Simple mode: drop, song, create
+
+1. Drop gameplay clips anywhere in the desktop window (or use Import).
+2. Type the song title. Choose your local music folder once, or drop the audio file too.
+3. Click **Create Christian montage**. DRIFT analyzes, directs, renders, validates and automatically saves a uniquely named MP4 under your system Videos/Movies folder in `DRIFT`.
+
+Music matching uses local filenames (including artist/title words), not online streaming or downloads. Ambiguous matches offer a choice. Rename local music files descriptively. Matching is bounded to 10,000 folder entries; choose a focused music folder. Clip duplicates are ignored. Video/audio media validity is checked by the rendering engine after import.
+
+Advanced controls are hidden by default. Select Ollama and its model once under Advanced; mode/model, brief and music folder are remembered locally. With no model configured, the automatic activity engine remains available. The quick-create preset uses the default Christian brief and renders an original closing title, “Walk with Christ.” It does not automatically generate spoken scripture or reference dialogue. Title rendering requires FFmpeg drawtext and an available font; Windows validation remains outstanding.
+
+Kaiser-level creativity remains a development goal, not an implemented quality guarantee. Semantic visual analysis, advanced speed ramps/compositing, narration generation and iterative editorial evaluation are still needed.

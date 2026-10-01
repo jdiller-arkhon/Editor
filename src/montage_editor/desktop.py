@@ -2,17 +2,20 @@
 import json
 from pathlib import Path
 import sys
+from datetime import datetime
+from uuid import uuid4
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QSettings, QStandardPaths
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
-    QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea)
+    QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea, QInputDialog)
 
 from .workspace_widgets import CinemaCanvas, TimelineLanes, CathedralBanner
+from .music_library import find_songs, AUDIO, VIDEO
 from .config import Settings
 from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay
 
@@ -76,8 +79,11 @@ class RenderJob(QThread):
 
 
 class Studio(QMainWindow):
-    def __init__(self):
+    def __init__(self, preferences=None):
         super().__init__()
+        self.preferences=preferences if preferences is not None else QSettings("DRIFT", "MontageStudio")
+        self.music_folder=str(self.preferences.value("music_folder", ""))
+        self.setAcceptDrops(True)
         self.setWindowTitle('DRIFT • Montage Studio')
         self.resize(1680,1120)
         self.setMinimumSize(1280,950)
@@ -95,9 +101,9 @@ class Studio(QMainWindow):
         rail_layout.addWidget(label('MONTAGE STUDIO','eyebrow'))
         rail_layout.addSpacing(22)
         for name,callback in [('Home',lambda:self.screen.setCurrentIndex(0)),
-                              ('Import',self.import_media),('AI Director',lambda:self.ai_model.setFocus()),
+                              ('Import',self.import_media),('AI Director',lambda:self.show_advanced(self.ai_model)),
                               ('Timeline',lambda:self.timeline_table.setFocus()),
-                              ('Effects',lambda:self.transition.setFocus()),
+                              ('Effects',lambda:self.show_advanced(self.transition)),
                               ('Audio',self.import_music),('Color',None),('Styles',None),
                               ('Export',self.export)]:
             button=QPushButton(name);button.setObjectName('nav')
@@ -129,7 +135,22 @@ class Studio(QMainWindow):
                                       ('EXPORT','Render the loaded timeline',self.replay_export)]:
             card=QPushButton(title+'  →\n'+detail); card.setObjectName('workflow')
             card.setMinimumHeight(68);card.clicked.connect(callback);steps.addWidget(card,1)
-        layout.addLayout(steps)
+        self.steps_widget=QWidget();self.steps_widget.setLayout(steps);self.steps_widget.hide()
+        layout.addWidget(self.steps_widget)
+        intake,intake_layout=panel()
+        intake_layout.addWidget(label('DROP CLIPS. CHOOSE A SONG. CREATE.', 'eyebrow'))
+        self.drop_hint=label('Drop gameplay clips anywhere in this window — or use Import.', 'muted')
+        intake_layout.addWidget(self.drop_hint)
+        quick=QHBoxLayout()
+        self.song_name=QLineEdit();self.song_name.setPlaceholderText('Type the song title from your music folder…')
+        self.song_name.textEdited.connect(lambda:self.clear_music_selection())
+        quick.addWidget(self.song_name,1)
+        library=QPushButton('Music folder');library.clicked.connect(self.choose_music_folder);quick.addWidget(library)
+        self.create_button=QPushButton('Create Christian montage');self.create_button.setObjectName('primary')
+        self.create_button.clicked.connect(lambda:self.export(automatic=True));quick.addWidget(self.create_button)
+        advanced=QPushButton('Advanced');advanced.clicked.connect(self.toggle_advanced);quick.addWidget(advanced)
+        intake_layout.addLayout(quick);layout.addWidget(intake)
+
         workspace = QSplitter(Qt.Horizontal)
         layout.addWidget(workspace,1)
         assets,left = panel()
@@ -269,6 +290,7 @@ class Studio(QMainWindow):
         inspector.setMinimumHeight(960)
         inspector_scroll=QScrollArea();inspector_scroll.setWidgetResizable(True);inspector_scroll.setWidget(inspector)
         inspector_scroll.setMinimumWidth(360);workspace.addWidget(inspector_scroll)
+        self.inspector_scroll=inspector_scroll;inspector_scroll.hide()
         workspace.setSizes([220,1000,400])
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
         layout.addWidget(self.progress)
@@ -276,6 +298,89 @@ class Studio(QMainWindow):
         self.status.setWordWrap(True); layout.addWidget(self.status)
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
+        self.ai_model.setText(str(self.preferences.value('ai_model','')))
+        saved_mode=int(self.preferences.value('director_mode',0))
+        self.director_mode.setCurrentIndex(saved_mode if saved_mode in (0,1) else 0)
+        self.ai_brief.setText(str(self.preferences.value('brief','')))
+        self.ai_model.editingFinished.connect(self.save_preferences)
+        self.director_mode.currentIndexChanged.connect(self.save_preferences)
+        self.ai_brief.editingFinished.connect(self.save_preferences)
+        self.status.setText('Drop clips, type your song, and create. Christian direction is the default. Set local AI once in Advanced.')
+
+    def save_preferences(self,*args):
+        for key,value in [('music_folder',self.music_folder),('ai_model',self.ai_model.text().strip()),
+                          ('director_mode',self.director_mode.currentIndex()),('brief',self.ai_brief.text().strip())]:
+            self.preferences.setValue(key,value)
+
+    def show_advanced(self,target=None):
+        self.inspector_scroll.show();self.steps_widget.show()
+        if target is not None:target.setFocus();self.inspector_scroll.ensureWidgetVisible(target)
+
+    def toggle_advanced(self):
+        visible=self.inspector_scroll.isHidden()
+        self.inspector_scroll.setVisible(visible);self.steps_widget.setVisible(visible)
+
+    def clear_music_selection(self):
+        self.music_path=None
+
+    def choose_music_folder(self):
+        folder=QFileDialog.getExistingDirectory(self,'Choose the folder containing your songs',self.music_folder)
+        if folder:
+            self.music_folder=folder;self.save_preferences()
+            self.status.setText('Music folder saved. Type a song title or artist and title; DRIFT matches local filenames.')
+
+    def resolve_song(self):
+        if self.music_path and Path(self.music_path).is_file():return True
+        try:
+            if not self.music_folder:
+                self.choose_music_folder()
+                if not self.music_folder:return False
+            matches=find_songs(self.music_folder,self.song_name.text())
+            if not matches:
+                QMessageBox.information(self,'Song not found','No matching local audio. Try artist and title, choose another folder, or drop the song file.');return False
+            if len(matches)>1:
+                names=[str(p) for p in matches]
+                choice,ok=QInputDialog.getItem(self,'Choose your song','Several files match:',names,0,False)
+                if not ok:return False
+                path=choice
+            else:path=str(matches[0])
+            self.select_music(path);return True
+        except ValueError as error:
+            QMessageBox.information(self,'Choose your music',str(error));return False
+
+    def select_music(self,path):
+        self.music_path=str(Path(path).resolve())
+        self.song_name.setText(Path(path).stem);self.music_label.setText(Path(path).name)
+
+    def dragEnterEvent(self,event):
+        if event.mimeData().hasUrls() and any(url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in VIDEO|AUDIO for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+        else:event.ignore()
+
+    def dropEvent(self,event):
+        self.add_files([url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()])
+        event.acceptProposedAction()
+
+    def add_files(self,files):
+        existing={self.footage.item(i).text() for i in range(self.footage.count())}
+        audio=[];ignored=0
+        for path in files:
+            path=Path(path)
+            if not path.is_file():ignored+=1;continue
+            resolved=str(path.resolve())
+            if path.suffix.lower() in VIDEO:
+                if resolved not in existing:self.footage.addItem(resolved);existing.add(resolved)
+            elif path.suffix.lower() in AUDIO:audio.append(resolved)
+            else:ignored+=1
+        if len(audio)==1:self.select_music(audio[0])
+        elif len(audio)>1:
+            choice,ok=QInputDialog.getItem(self,'Choose music','Use which dropped audio file?',audio,0,False)
+            if ok:self.select_music(choice)
+        if self.footage.count():
+            self.assets_panel.show();self.footage.setCurrentRow(0)
+        self.drop_hint.setText(f'{self.footage.count()} gameplay clips ready. '+('Music selected.' if self.music_path else 'Type your song title.'))
+        if ignored:self.status.setText(f'Ignored {ignored} unsupported or missing files.')
+
 
     def replay_export(self):
         if self.timeline is None:
@@ -305,16 +410,11 @@ class Studio(QMainWindow):
 
     def import_media(self):
         files,_ = QFileDialog.getOpenFileNames(self,'Import gameplay','','Video (*.mp4 *.mkv *.mov *.webm);;All files (*)')
-        existing = {self.footage.item(i).text() for i in range(self.footage.count())}
-        for path in files:
-            if path not in existing:
-                self.footage.addItem(path); existing.add(path)
-        if self.footage.count():
-            self.assets_panel.show(); self.footage.setCurrentRow(0)
+        self.add_files(files)
 
     def import_music(self):
         path,_ = QFileDialog.getOpenFileName(self,'Choose music','','Audio (*.wav *.mp3 *.flac *.m4a);;All files (*)')
-        if path: self.music_path=path; self.music_label.setText(Path(path).name)
+        if path: self.select_music(path)
 
     def preview_file(self,path):
         if path:
@@ -359,11 +459,16 @@ class Studio(QMainWindow):
             try: self.show_timeline(Timeline.load(path))
             except Exception as error: QMessageBox.warning(self,'Cannot load timeline',str(error))
 
-    def export(self,checked=False,replay=False):
+    def export(self,checked=False,replay=False,automatic=False):
         if self.job is not None: return
-        if not replay and (not self.footage.count() or not self.music_path):
-            QMessageBox.information(self,'Add your media','Import gameplay and select a music track first.'); return
-        path,_=QFileDialog.getSaveFileName(self,'Export montage','','MP4 (*.mp4)')
+        if not replay and not self.footage.count():
+            QMessageBox.information(self,'Add your clips','Drop gameplay clips into the window first.');return
+        if not replay and not self.resolve_song():return
+        if automatic:
+            movies=QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or str(Path.home()/'Videos')
+            path=str(Path(movies)/'DRIFT'/(datetime.now().strftime('montage-%Y%m%d-%H%M%S-')+uuid4().hex[:6]+'.mp4'))
+        else:
+            path,_=QFileDialog.getSaveFileName(self,'Export montage','','MP4 (*.mp4)')
         if not path: return
         if not path.lower().endswith('.mp4'): path+='.mp4'
         try:
@@ -375,12 +480,14 @@ class Studio(QMainWindow):
                 settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value())
                 sources=[self.footage.item(i).text() for i in range(self.footage.count())]
                 song=self.music_path; story=self.story()
+                if automatic:story['faith_message']='Walk with Christ.'
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
                 if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or None
                 operation=lambda:create_montage(sources,song,path,settings,story,model,brief)
         except Exception as error:
             QMessageBox.warning(self,'Check story settings',str(error)); return
+        self.create_button.setEnabled(False);self.create_button.setText('Creating your montage…')
         self.export_button.setEnabled(False); self.replay_button.setEnabled(False)
         self.progress.setRange(0,0); self.status.setText('Analyzing and rendering • The workspace stays responsive. Please wait for validation.')
         self.job=RenderJob(operation)
@@ -391,10 +498,12 @@ class Studio(QMainWindow):
 
     def completed(self,report,path,replay):
         self.last_output=path
+        self.save_preferences()
         self.status.setText(f"Validated export • {report['duration']:.2f}s • {report['width']} × {report['height']} • "+
                             ('Shortened to available media.' if report.get('shortened') else 'Full decode passed.'))
         self.open_button.setEnabled(True); self.preview_file(path)
         if not replay: self.show_timeline(Timeline.load(Path(path).with_suffix('.timeline.json')))
+        self.status.setText(self.status.text()+' Saved to '+path)
 
     def failed(self,message):
         self.status.setText('Export failed • '+message)
@@ -402,6 +511,7 @@ class Studio(QMainWindow):
 
     def finished(self):
         self.progress.setRange(0,1); self.progress.setValue(1)
+        self.create_button.setEnabled(True);self.create_button.setText('Create Christian montage')
         self.export_button.setEnabled(True); self.replay_button.setEnabled(self.timeline is not None)
         self.job.deleteLater(); self.job=None
 

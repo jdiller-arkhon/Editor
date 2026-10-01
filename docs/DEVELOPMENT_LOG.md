@@ -55,3 +55,10 @@
 - Records provider/model/plan in analysis sidecar. Missing/invalid Ollama fails explicitly rather than falsely claiming AI operation. Existing heuristic mode and timeline replay retained.
 - Tests: eight core tests passed in 8.153s, including transport mock, invalid-plan rejection and actual MP4 from mocked AI plan. Three desktop checks passed. Ollama binary/service absent, so live inference and model quality remain unvalidated.
 - Added scrolling inspector to preserve readable controls after adding AI settings. Advanced vision, TTS, reference selection, speed ramps and autonomous quality iteration remain planned.
+
+## 2026-10-01 — Drop/song/create simple mode
+- User requested minimal interaction: drop clips, type desired song, automatically create Christian-inspired montages.
+- Added native file drag/drop and duplicate handling, local song filename matching with ambiguity selection, one-time saved music folder/model/brief preferences, hidden advanced controls and one-click quick creation with unique automatic output path in OS Movies/Videos/DRIFT.
+- Added original Christian closing title for quick mode and persisted faith_message in backward-compatible timelines. FFmpeg drawtext uses a literal text file with expansion disabled. No downloaded songs, fabricated scripture or synthesized speech.
+- Validation: ten core tests passed in 8.677 seconds; four desktop checks passed in .325 seconds. Covers local music matching, duplicate drop ingestion, settings persistence, default hidden inspector and real titled render/replay. Screenshot inspected. Previous Ollama integration GitHub CI passed.
+- Limitations: song lookup matches local filenames only; library scan bounded to 10,000 entries. Windows drag/drop/device execution and live Ollama quality remain unvalidated. Artistic equivalence to Kaiser, advanced effects and autonomous quality iteration remain goals.

@@ -64,7 +64,7 @@ class RealRenderTests(unittest.TestCase):
             self.assertEqual(Timeline.load(d/'ai.timeline.json').transition,'fade_black')
             story = replace(timeline, dialogue=[DialogueCue(str(music), 1, 0, 2,
                             reference='Original narration inspired by Christian hope')],
-                            transition='fade_black')
+                            transition='fade_black',faith_message='Walk with Christ.')
             story.save(d/'story.json')
             self.assertEqual(Timeline.load(d/'story.json'), story)
             self.assertTrue(render(story, d/'story.mp4')['full_decode'])

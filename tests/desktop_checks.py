@@ -1,5 +1,8 @@
 """Run explicitly in the desktop CI job with QT_QPA_PLATFORM=offscreen."""
 import unittest
+from pathlib import Path
+import tempfile
+from PySide6.QtCore import QSettings
 from montage_editor.desktop import QApplication, Studio, STYLE, QTableWidgetItem, RenderJob
 from montage_editor.pipeline import Timeline, Clip
 from montage_editor.config import Settings
@@ -31,6 +34,24 @@ class DesktopTests(unittest.TestCase):
         window.show(); self.app.processEvents()
         self.assertFalse(window.grab().isNull())
         window.close()
+
+    def test_drop_ingestion_and_saved_setup(self):
+        with tempfile.TemporaryDirectory() as d:
+            prefs=QSettings(str(Path(d)/'prefs.ini'),QSettings.IniFormat)
+            window=Studio(prefs)
+            video=Path(d)/'clip.mp4';song=Path(d)/'Artist - Hope.wav'
+            video.touch();song.touch()
+            window.add_files([str(video),str(video),str(song)])
+            self.assertEqual(window.footage.count(),1)
+            self.assertEqual(window.music_path,str(song.resolve()))
+            window.ai_model.setText('local-model');window.director_mode.setCurrentIndex(1)
+            window.music_folder=d;window.save_preferences();window.close()
+            restored=Studio(prefs)
+            self.assertEqual(restored.ai_model.text(),'local-model')
+            self.assertEqual(restored.director_mode.currentIndex(),1)
+            self.assertEqual(restored.music_folder,d)
+            self.assertTrue(restored.inspector_scroll.isHidden())
+            restored.close()
 
     def test_background_job_reports_failures(self):
         errors=[]

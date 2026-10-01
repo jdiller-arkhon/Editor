@@ -39,3 +39,7 @@ Eight core tests, including mocked structured transport, invalid/duplicate/unkno
 ## Next automation stages — planned
 
 Vision-based event evidence, confidence labeling, voice transcription and timing, licensed dialogue libraries, optional original narration/TTS, advanced effects with measurable controls, automatic output comparison and Windows/GPU performance validation. These require capabilities beyond a text model.
+
+## Low-interaction desktop mode
+
+The home screen now exposes drop clips, song title and Create Christian montage. Music folder and local model are configured once and remembered using OS QSettings. Advanced controls can be reopened. Quick-create exports automatically to a unique OS Movies/Videos/DRIFT filename and adds an original closing title. Music-title lookup is local filename matching only. No streaming/downloading provider or TTS is implemented. Missing model inference still fails explicitly rather than silently presenting a baseline result as AI.

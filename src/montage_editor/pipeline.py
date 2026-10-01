@@ -14,8 +14,8 @@ from .storytelling import DialogueCue
 LOG = logging.getLogger(__name__)
 
 
-def run(args):
-    return subprocess.run(args, check=True, capture_output=True)
+def run(args, cwd=None):
+    return subprocess.run(args, check=True, capture_output=True, cwd=cwd)
 
 
 def probe(path):
@@ -120,11 +120,14 @@ class Timeline:
     dialogue: list = field(default_factory=list)
     transition: str = 'cut'
     transition_duration: float = .2
+    faith_message: str = ''
 
     def validate(self):
         if self.version != 1 or not self.clips:
             raise ValueError('Unsupported or empty timeline')
         Settings(**self.settings)
+        if not isinstance(self.faith_message,str) or len(self.faith_message)>140 or '\x00' in self.faith_message:
+            raise ValueError('Faith message must be text of at most 140 characters')
         if self.transition not in ('cut', 'fade_black', 'fade_white'):
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
@@ -241,6 +244,8 @@ def render(timeline, output):
             raise ValueError('Dialogue exceeds source duration')
     with tempfile.TemporaryDirectory(prefix='montage-', dir=output.parent) as temporary:
         temporary = Path(temporary)
+        if timeline.faith_message:
+            (temporary/'faith-title.txt').write_text(timeline.faith_message,encoding='utf-8')
         for i,clip in enumerate(timeline.clips):
             LOG.info('Rendering clip %d/%d', i+1, len(timeline.clips))
             transition_filter = ''
@@ -249,12 +254,17 @@ def render(timeline, output):
                 length = min(timeline.transition_duration, clip.duration/2)
                 transition_filter = (f',fade=t=in:d={length}:color={color},'
                                      f'fade=t=out:st={clip.duration-length}:d={length}:color={color}')
+            title_filter = ''
+            if timeline.faith_message and i == len(timeline.clips)-1:
+                title_filter = (f',drawtext=textfile=faith-title.txt:expansion=none:fontcolor=white:'
+                                f'fontsize={max(18,settings.height//22)}:box=1:boxcolor=black@0.6:'
+                                f'boxborderw=12:x=(w-tw)/2:y=h-th-50')
             run(['ffmpeg', '-v', 'error', '-i', clip.source, '-ss', str(clip.start),
                  '-t', str(clip.duration), '-an', '-vf',
                  f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease,'
-                 f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={settings.fps}'+transition_filter,
+                 f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={settings.fps}'+transition_filter+title_filter,
                  '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p',
-                 '-threads', '2', str(temporary/f'{i:05d}.mp4')])
+                 '-threads', '2', str(temporary/f'{i:05d}.mp4')],cwd=temporary)
         listing = temporary/'clips.txt'
         listing.write_text(''.join(f"file '{i:05d}.mp4'\n" for i in range(len(timeline.clips))))
         pending = temporary/'final.mp4'
@@ -318,7 +328,8 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         from dataclasses import replace
         timeline = replace(timeline, dialogue=[DialogueCue(**c) for c in story.get('dialogue', [])],
                            transition=story.get('transition', timeline.transition) if not ai_model else timeline.transition,
-                           transition_duration=story.get('transition_duration', timeline.transition_duration) if not ai_model else timeline.transition_duration)
+                           transition_duration=story.get('transition_duration', timeline.transition_duration) if not ai_model else timeline.transition_duration,
+                           faith_message=story.get('faith_message',''))
     report = render(timeline, output)
     timeline.save(sidecars[0])
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan}, indent=2))
