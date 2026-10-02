@@ -34,3 +34,7 @@ cut centers; candidate-first selection before fallback filling; source-detail/up
 energetic local-song excerpt selection with persistent offsets. Use held edge handles explicitly
 rather than silently repeating extra footage. Reject known HDR sources until tone mapping exists.
 Do not equate CRF/1080p with native detail, semantic editing judgment or studio-quality validation.
+
+## 2026-10-02 — Subtle story direction and Claude continuity
+
+Keep the workspace visually neutral and default faith influence to hope/perseverance with an editable original closing line. Offer explicit Christian and neutral choices in Creative controls. Preserve custom lines across tone changes and persisted settings; tone changes replace only recognized preset text. Both automatic and manual generation pass the selected line into the real renderer. Keep the repository, branch, tests and development log as the handoff source of truth; root CLAUDE.md and docs/CLAUDE_HANDOFF.md describe tested implementation and concrete regression safeguards.

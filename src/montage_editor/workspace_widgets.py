@@ -1,32 +1,35 @@
 """Code-native studio artwork and a timeline drawn only from real project data."""
 from pathlib import Path
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QLinearGradient, QRadialGradient, QFont
+from PySide6.QtGui import QColor, QPainter, QPen, QLinearGradient, QRadialGradient, QFont, QPainterPath
 from PySide6.QtWidgets import QWidget
 
 
 class CinemaCanvas(QWidget):
+    """Abstract viewfinder, not footage or a religious title card."""
     def paintEvent(self,event):
         p=QPainter(self); p.setRenderHint(QPainter.Antialiasing)
         w,h=self.width(),self.height()
         background=QLinearGradient(0,0,w,h)
-        background.setColorAt(0,QColor('#171b24')); background.setColorAt(.5,QColor('#080a0f')); background.setColorAt(1,QColor('#171510'))
+        background.setColorAt(0,QColor('#202023'));background.setColorAt(.5,QColor('#111114'));background.setColorAt(1,QColor('#19191d'))
         p.fillRect(self.rect(),background)
-        glow=QRadialGradient(w*.5,h*.28,w*.45)
-        glow.setColorAt(0,QColor(216,193,145,45));glow.setColorAt(.5,QColor(139,152,180,12));glow.setColorAt(1,QColor(0,0,0,0))
+        glow=QRadialGradient(w*.5,h*.24,w*.42)
+        glow.setColorAt(0,QColor(225,225,240,25));glow.setColorAt(1,QColor(0,0,0,0))
         p.fillRect(self.rect(),glow)
-        p.setPen(QPen(QColor(195,184,160,22),1))
-        for size in [72,120,190,275]:
-            p.drawEllipse(QRectF(w/2-size/2,h*.28-size/2,size,size))
-        p.setPen(QPen(QColor(230,218,192,180),2))
-        x,y=w/2,h*.28
-        p.drawLine(int(x),int(y-26),int(x),int(y+26))
-        p.drawLine(int(x-17),int(y-10),int(x+17),int(y-10))
-        p.setPen(QColor('#545962'))
+        x,y=w/2,h*.25
+        p.save();p.translate(x,y)
+        for angle,offset in [(-8,-9),(5,7),(0,0)]:
+            p.save();p.rotate(angle)
+            rect=QRectF(-47+offset,-27+offset,94,54)
+            p.setBrush(QColor(14,14,18,180));p.setPen(QPen(QColor(190,190,210,50),1))
+            p.drawRoundedRect(rect,8,8);p.restore()
+        play=QPainterPath();play.moveTo(-6,-10);play.lineTo(10,0);play.lineTo(-6,10);play.closeSubpath()
+        p.setPen(Qt.NoPen);p.setBrush(QColor('#b8b8c4'));p.drawPath(play);p.restore()
+        p.setPen(QColor('#4c4c56'))
         for x,y,dx,dy in [(18,18,1,1),(w-18,18,-1,1),(18,h-18,1,-1),(w-18,h-18,-1,-1)]:
             p.drawLine(x,y,x+dx*15,y);p.drawLine(x,y,x,y+dy*15)
-        p.setFont(QFont('Segoe UI',9));p.setPen(QColor('#6d737f'))
-        p.drawText(QRectF(25,h-33,w-50,20),Qt.AlignLeft,'LOCAL STUDIO   /   NO MEDIA LOADED')
+        p.setFont(QFont('Segoe UI',8));p.setPen(QColor('#74747e'))
+        p.drawText(QRectF(25,h-31,w-50,20),Qt.AlignLeft,'SCREENING ROOM  /  READY WHEN YOU ARE')
 
 
 class TimelineLanes(QWidget):
@@ -51,20 +54,20 @@ class TimelineLanes(QWidget):
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(),QColor('#0c0e13'))
+        p.fillRect(self.rect(),QColor('#101012'))
         left=95; width=max(1,self.width()-110)
         total=sum(c.duration for c in self.timeline.clips) if self.timeline else 30
         p.setFont(QFont('Segoe UI',8))
         for i in range(7):
             x=left+width*i/6
-            p.setPen(QColor('#222730'));p.drawLine(int(x),23,int(x),self.height()-10)
-            p.setPen(QColor('#737b88'));p.drawText(QRectF(x,0,60,20),f'{total*i/6:.1f}s')
+            p.setPen(QColor('#28282e'));p.drawLine(int(x),23,int(x),self.height()-10)
+            p.setPen(QColor('#81818b'));p.drawText(QRectF(x,0,60,20),f'{total*i/6:.1f}s')
         for i,name in enumerate(['V1  FOOTAGE','A1  MUSIC','A2  DIALOGUE']):
             y=30+i*39
-            p.setPen(QColor('#949aa5'));p.drawText(QRectF(8,y+8,86,20),name)
-            p.fillRect(QRectF(left,y,width,30),QColor('#141821'))
+            p.setPen(QColor('#ababba'));p.drawText(QRectF(8,y+8,86,20),name)
+            p.fillRect(QRectF(left,y,width,30),QColor('#1b1b20'))
         if not self.timeline:
-            p.setPen(QColor('#616a79'))
+            p.setPen(QColor('#777783'))
             p.drawText(QRectF(left+12,38,width-24,20),'Generate or open a timeline to reveal your edit')
             return
         def block(start,length,row,text,top,bottom):
@@ -76,32 +79,50 @@ class TimelineLanes(QWidget):
             p.drawText(rect.adjusted(7,5,0,0),text);p.restore()
         cursor=0
         for index,clip in enumerate(self.timeline.clips):
-            block(cursor,clip.duration,0,f'{index+1:02d}  {Path(clip.source).name}','#596579','#293344');cursor+=clip.duration
-        block(0,total,1,Path(self.timeline.music).name,'#6d6651','#383427')
+            block(cursor,clip.duration,0,f'{index+1:02d}  {Path(clip.source).name}','#646471','#363640');cursor+=clip.duration
+        block(0,total,1,Path(self.timeline.music).name,'#68686f','#34343b')
         for cue in self.timeline.dialogue:
-            block(cue.at,cue.duration,2,cue.reference or Path(cue.source).name,'#536960','#293e35')
+            block(cue.at,cue.duration,2,cue.reference or Path(cue.source).name,'#62626c','#33333d')
         x=left+width*max(0,min(total,self.position))/total
-        p.setPen(QPen(QColor('#f1e2c0'),2));p.drawLine(int(x),20,int(x),self.height()-5)
+        p.setPen(QPen(QColor('#ededf6'),2));p.drawLine(int(x),20,int(x),self.height()-5)
 
 
 class CathedralBanner(QWidget):
+    """Purpose-led studio banner; architecture is a quiet background reference."""
     def __init__(self):
         super().__init__()
         from PySide6.QtGui import QPixmap
         self.art=QPixmap(str(Path(__file__).parent/'resources'/'cathedral.jpg'))
-        self.setMinimumHeight(170);self.setMaximumHeight(220)
+        self.setMinimumHeight(150);self.setMaximumHeight(175)
+        self.setAccessibleName('DRIFT cinematic studio banner')
 
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing)
+        w,h=self.width(),self.height()
+        p.setPen(Qt.NoPen)
+        gradient=QLinearGradient(0,0,w,h)
+        gradient.setColorAt(0,QColor('#242427'));gradient.setColorAt(.6,QColor('#16161a'));gradient.setColorAt(1,QColor('#0b0b0e'))
+        p.setBrush(gradient);p.drawRoundedRect(QRectF(0,0,w,h),14,14)
+        p.save();clip=QPainterPath();clip.addRoundedRect(QRectF(1,1,w-2,h-2),14,14);p.setClipPath(clip)
         if not self.art.isNull():
             scaled=self.art.scaled(self.size(),Qt.KeepAspectRatioByExpanding,Qt.SmoothTransformation)
-            p.drawPixmap((self.width()-scaled.width())//2,0,scaled)
-        else:p.fillRect(self.rect(),QColor('#101216'))
-        shade=QLinearGradient(0,0,0,self.height());shade.setColorAt(0,QColor(0,0,0,10));shade.setColorAt(1,QColor(0,0,0,110))
-        p.fillRect(self.rect(),shade)
-        p.setPen(QColor('#eeeeee'));font=QFont('Georgia',22);font.setLetterSpacing(QFont.AbsoluteSpacing,6);p.setFont(font)
-        y=self.height()*.5
-        p.drawText(QRectF(30,y,self.width()*.4,42),Qt.AlignCenter,'CREATE')
-        p.drawText(QRectF(self.width()*.58,y,self.width()*.4-30,42),Qt.AlignCenter,'WITH PURPOSE')
-        font=QFont('Segoe UI',9);font.setLetterSpacing(QFont.AbsoluteSpacing,4);p.setFont(font);p.setPen(QColor('#bfc1c4'))
-        p.drawText(QRectF(0,self.height()-38,self.width(),25),Qt.AlignCenter,'FAITH  /  FOCUS  /  DISCIPLINE')
+            p.setOpacity(.07);p.drawPixmap((w-scaled.width())//2,(h-scaled.height())//2,scaled);p.setOpacity(1)
+        glow=QRadialGradient(w*.82,h*.4,w*.4)
+        glow.setColorAt(0,QColor(220,220,240,24));glow.setColorAt(1,QColor(0,0,0,0));p.fillRect(self.rect(),glow)
+        p.save();p.translate(w*.78,h*.49)
+        for angle,dx,dy in [(-12,-38,-3),(8,38,8),(0,0,0)]:
+            p.save();p.translate(dx,dy);p.rotate(angle)
+            p.setPen(Qt.NoPen);p.setBrush(QColor(0,0,0,65));p.drawRoundedRect(QRectF(-109,-38,224,96),10,10)
+            face=QLinearGradient(-110,-48,110,48);face.setColorAt(0,QColor('#43434b'));face.setColorAt(1,QColor('#1a1a20'))
+            p.setBrush(face);p.setPen(QPen(QColor(178,178,200,70),1));p.drawRoundedRect(QRectF(-112,-48,224,96),9,9)
+            p.setPen(QPen(QColor(235,235,245,45),1));p.drawLine(-96,-32,96,-32);p.drawLine(-96,30,96,30)
+            p.setFont(QFont('Segoe UI',9));p.setPen(QColor('#9999a8'));p.drawText(QRectF(-94,-19,188,38),Qt.AlignCenter,'D R I F T   /   STUDIO')
+            p.restore()
+        p.restore();p.restore()
+        p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor('#414149'),1));p.drawRoundedRect(QRectF(.5,.5,w-1,h-1),14,14)
+        p.setFont(QFont('Segoe UI',8,QFont.DemiBold));p.setPen(QColor('#b5b5c0'))
+        p.drawText(QRectF(30,20,w*.56,20),'THE MOMENT. THE MUSIC. THE STORY.')
+        p.setFont(QFont('Segoe UI',26 if w>1000 else 22,QFont.DemiBold));p.setPen(QColor('#f0f0f4'))
+        p.drawText(QRectF(28,50,w*.6,45),'Make every moment count.')
+        p.setFont(QFont('Segoe UI',10));p.setPen(QColor('#b0b0bb'))
+        p.drawText(QRectF(30,110,w*.6,23),'Your footage. Your soundtrack. A little more purpose.')

@@ -68,10 +68,31 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual((settings.width,settings.height),(1920,1080))
             self.assertEqual(settings.quality,'high')
             self.assertEqual(story['transition'],'cinematic')
+            self.assertEqual(story['faith_message'],'Keep the faith.')
+            self.assertEqual(window.create_button.text(),'Creating your montage…')
             self.assertTrue(story['auto_music_section'])
             self.assertTrue(story['normalize_audio'])
         window.job=None
         window.close()
+
+    def test_story_tone_is_subtle_by_default_and_custom_line_survives_reload(self):
+        with tempfile.TemporaryDirectory() as d:
+            prefs=QSettings(str(Path(d)/'tone.ini'),QSettings.IniFormat)
+            window=Studio(prefs)
+            self.assertEqual(window.story_tone.currentData(),'subtle')
+            self.assertEqual(window.story()['faith_message'],'Keep the faith.')
+            self.assertFalse(window.play_button.isEnabled())
+            window.story_tone.setCurrentIndex(window.story_tone.findData('christian'))
+            self.assertEqual(window.story()['faith_message'],'Walk with Christ.')
+            window.closing_line.setText('Hope carries us.');window.save_preferences();window.close()
+            restored=Studio(prefs)
+            self.assertEqual(restored.story_tone.currentData(),'christian')
+            self.assertEqual(restored.story()['faith_message'],'Hope carries us.')
+            restored.story_tone.setCurrentIndex(restored.story_tone.findData('neutral'))
+            self.assertEqual(restored.story()['faith_message'],'Hope carries us.')
+            restored.closing_line.setText('')
+            self.assertEqual(restored.story()['faith_message'],'')
+            restored.close()
 
     def test_background_job_reports_failures(self):
         errors=[]

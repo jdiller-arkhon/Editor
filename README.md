@@ -2,6 +2,8 @@
 
 A local, personal-use gaming montage engine. The first working vertical slice imports gameplay and music, measures activity and musical onsets, builds a deterministic timeline, exports a real MP4 and fully decodes it to validate the result.
 
+Continue this project in Claude using [CLAUDE.md](CLAUDE.md) and the detailed [handoff](docs/CLAUDE_HANDOFF.md). The working application currently lives on `feat/working-montage-pipeline` in [PR #1](https://github.com/jdiller-arkhon/Editor/pull/1); `main` contains the initial foundation. Verify branch state before continuing.
+
 ## Current status
 
 | Status | Features |
@@ -49,7 +51,7 @@ See [architecture](docs/ARCHITECTURE.md), [development](docs/DEVELOPMENT.md), [t
 
 ## Christian storytelling
 
-The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, signal-driven music ducking, mix limiting, and black/white fade transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.
+The product direction includes contemporary Christian montages that encourage following Christ. `create --story story.json` now supports timed local dialogue recordings, signal-driven music ducking, mix limiting, and black/white fades and cinematic composited transitions. Dialogue references and original/paraphrase/quotation labels persist in project metadata. These controls are implemented; automated reference selection, scripture captions, narrative AI and studio-quality output remain goals. See [Christian storytelling](docs/CHRISTIAN_STORYTELLING.md) for configuration and creative direction.
 
 ## Desktop studio
 
@@ -66,7 +68,7 @@ Desktop controls are tested offscreen on Linux; physical audio playback and Wind
 
 Linux desktop dependencies include `libegl1`, `libgl1`, `libopengl0` and `libpulse0` (Ubuntu packages). The desktop CI explicitly installs these; missing `libpulse0` caused the initial desktop run failure. Launch with `montage-studio` or `python -m montage_editor.desktop` after installing the desktop extra. The custom workspace now includes layered surfaces and actual timeline lanes. Timeline seeking applies to the rendered export, not unrendered source sequences.
 
-The desktop now follows the supplied DRIFT visual reference with an original packaged cathedral backdrop, monochrome navigation and five workflow cards. Analyze independently measures gameplay motion/audio and reports candidate activity (not kill confidence). The source library appears after import. AI Director opens local director settings; Color and Styles navigation remain disabled until implemented.
+The desktop uses layered graphite panels, restrained architectural texture, clear media intake and a real preview/timeline. Creative controls are hidden until needed. Analyze independently measures gameplay motion/audio and reports candidate activity (not kill confidence). The source library appears after import. AI Director opens local director settings.
 
 ## Automatic local AI director (experimental)
 
@@ -78,13 +80,13 @@ This integration is tested with mocked responses and real resulting renders; liv
 
 1. Drop gameplay clips anywhere in the desktop window (or use Import).
 2. Type the song title. Choose your local music folder once, or drop the audio file too.
-3. Click **Create Christian montage**. DRIFT analyzes, directs, renders, validates and automatically saves a uniquely named MP4 under your system Videos/Movies folder in `DRIFT`.
+3. Click **Create montage**. DRIFT analyzes, directs, renders, validates and automatically saves a uniquely named MP4 under your system Videos/Movies folder in `DRIFT`.
 
 Music matching uses local filenames (including artist/title words), not online streaming or downloads. Ambiguous matches offer a choice. Rename local music files descriptively. Matching is bounded to 10,000 folder entries; choose a focused music folder. Clip duplicates are ignored. Video/audio media validity is checked by the rendering engine after import.
 
-Advanced controls are hidden by default. Select Ollama and its model once under Advanced; mode/model, brief and music folder are remembered locally. With no model configured, the automatic activity engine remains available. The quick-create preset uses the default Christian brief and renders an original closing title, “Walk with Christ.” It does not automatically generate spoken scripture or reference dialogue. Title rendering requires FFmpeg drawtext and an available font; Windows validation remains outstanding.
+Advanced controls are hidden by default. Select Ollama and its model once under Creative controls; mode/model, brief and music folder are remembered locally. With no model configured, the automatic activity engine remains available. The default Subtle tone emphasizes hope and perseverance with an editable original closing title, “Keep the faith.” Creative controls also offer an explicit Christian tone (“Walk with Christ.”) and Neutral tone without a default title. Custom closing lines persist across tone changes and restarts; clear the field to omit the title. It does not automatically generate spoken scripture or reference dialogue. Title rendering requires FFmpeg drawtext and an available font; Windows validation remains outstanding.
 
-Kaiser-level creativity remains a development goal, not an implemented quality guarantee. Semantic visual analysis, smooth speed curves/compositing, narration generation and iterative editorial evaluation are still needed.
+Kaiser-level creativity remains a development goal, not an implemented quality guarantee. Semantic visual analysis, smooth speed curves/subject-aware compositing, narration generation and iterative editorial evaluation are still needed.
 
 ## Cinematic edit profile
 
