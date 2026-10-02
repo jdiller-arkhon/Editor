@@ -842,7 +842,25 @@ class Studio(QMainWindow):
         else: event.accept()
 
 
+def self_check():
+    """Packaged-build smoke test: fonts, resources, FFmpeg discovery and the window itself."""
+    from PySide6.QtGui import QFontDatabase
+    from .environment import detect_environment
+    app=QApplication.instance() or QApplication(sys.argv[:1]); app.setStyleSheet(STYLE)
+    window=Studio(QSettings(str(Path(QStandardPaths.writableLocation(QStandardPaths.TempLocation))/'drift-self-check.ini'),
+                            QSettings.IniFormat))
+    environment=detect_environment()
+    result=dict(window=not window.grab().isNull(),fonts=all(f in QFontDatabase.families() for f in ('Manrope','Sora')),
+                banner_art=not window.banner.art.isNull(),swishes=len(__import__('montage_editor.craft',fromlist=['x']).SWISHES),
+                ffmpeg=environment['ffmpeg'],ffprobe=environment['ffprobe'])
+    window.close()
+    print(json.dumps(result))
+    return 0 if result['window'] and result['fonts'] and result['banner_art'] and result['swishes'] else 1
+
+
 def main():
+    if '--self-check' in sys.argv:
+        sys.exit(self_check())
     app=QApplication(sys.argv); app.setStyleSheet(STYLE)
     window=Studio(); window.show(); sys.exit(app.exec())
 
