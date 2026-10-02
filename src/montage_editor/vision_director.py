@@ -77,7 +77,8 @@ def extract_frames(source, time, duration, width=512):
 def review_pool(candidates, limit):
     """Strongest activity first, interleaved across sources so one clip cannot fill the pool."""
     by_source = {}
-    for candidate in sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time'])):
+    for candidate in sorted((c for c in candidates if not c.get('exclude')),
+                            key=lambda c: (-c['score'], c['source'], c['time'])):
         by_source.setdefault(candidate['source'], []).append(candidate)
     pool, queues = [], list(by_source.values())
     while len(pool) < limit and any(queues):

@@ -15,6 +15,7 @@ from .storytelling import DialogueCue
 from .editing import PROFILES, retime_filters, source_offset
 from .transitions import BLENDS, EFFECTS, LOSSLESS, compose
 from .music_sections import choose_section
+from . import screen_analysis as screens
 from .rhythm import alignment_report, beat_grid, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
@@ -97,41 +98,70 @@ def music_analysis(media, duration, start=0):
     return result
 
 
-def analyze_gameplay(media, settings):
+def analyze_gameplay(media, settings, report=None):
+    """Activity candidates plus excluded non-gameplay spans (HUD absent: deaths, menus).
+
+    Scores combine frame motion, gameplay loudness and broadband audio transients
+    (gunshots/explosions); they measure activity, not semantic events.
+    """
     if not any(s['codec_type'] == 'video' for s in media['streams']):
         raise ValueError('Gameplay input must contain a video stream')
-    motion = []
+    mask = screens.learn_hud_mask(media['path'], media['duration'])
+    motion, hud = [], []
     previous = None
-    size = 160*90
+    W, H = screens.WIDTH, screens.HEIGHT
     # Chunked decode bounds raw frame memory. Continuity is retained between chunks.
     for start in np.arange(0, media['duration'], 30):
         raw = run(['ffmpeg', '-v', 'error', '-ss', str(start), '-i', media['path'],
                    '-t', str(min(30, media['duration']-start)), '-an',
-                   '-vf', f'fps={settings.analysis_fps},scale=160:90,format=gray',
+                   '-vf', f'fps={settings.analysis_fps},scale={W}:{H},format=gray',
                    '-threads', '1', '-f', 'rawvideo', 'pipe:1']).stdout
-        count = len(raw)//size
-        for frame in np.frombuffer(raw[:count*size], dtype=np.uint8).reshape(count, size):
-            current = frame.astype(np.float32)
+        count = len(raw)//(W*H)
+        for frame in np.frombuffer(raw[:count*W*H], dtype=np.uint8).reshape(count, H, W):
+            full = frame.astype(np.float32)
+            current = full.reshape(H//2, 2, W//2, 2).mean(axis=(1, 3))
             motion.append(float(np.mean(abs(current-previous)))/255 if previous is not None else 0)
             previous = current
+            if mask is not None:
+                hud.append(screens.presence(full, mask))
     if not motion:
         raise ValueError('Gameplay contains no decoded frames')
     scores = np.asarray(motion)
+    times = np.arange(len(scores))/settings.analysis_fps
     if any(s['codec_type'] == 'audio' for s in media['streams']):
         audio = audio_envelope(media['path'], media['duration'])
-        times = np.arange(len(scores))/settings.analysis_fps
         loudness = np.interp(times, np.arange(len(audio))*.05, audio) if len(audio) else scores*0
-        scores = .75*normalize(scores) + .25*normalize(loudness)
+        flux, hop = screens.transients(media['path'], media['duration'])
+        radius = max(1, int(round(.25/hop)))
+        impact = np.array([flux[max(0, int(t/hop)-radius):int(t/hop)+radius+1].max()
+                           if int(t/hop) < len(flux) else 0.0 for t in times])
+        scores = .55*normalize(scores) + .2*normalize(loudness) + .25*impact
     else:
         scores = normalize(scores)
+    excluded = []
+    if mask is not None and hud:
+        relative = np.asarray(hud)/max(float(np.median(hud)), 1e-6)
+        scores = scores*np.array([screens.hud_factor(r) for r in relative])
+        for a, b in screens.low_spans(times, relative):
+            excluded.append({'source': media['path'], 'time': (a+b)/2, 'score': 0.0, 'exclude': True,
+                             'span': [max(0.0, a-.5), min(media['duration'], b+.5)],
+                             'reason': 'HUD absent (death, scoreboard, menu or loading screen)',
+                             'source_duration': media['duration']})
+    if report is not None:
+        report[media['path']] = dict(hud_mask_pixels=int(mask.sum()) if mask is not None else 0,
+                                     excluded_spans=[e['span'] for e in excluded])
     order = sorted(range(len(scores)), key=lambda i: (-scores[i], i))
     selected = []
     for i in order:
         t = i/settings.analysis_fps
+        if scores[i] <= 0:
+            break
+        if any(e['span'][0] <= t <= e['span'][1] for e in excluded):
+            continue
         if all(abs(t-c['time']) >= settings.maximum_clip for c in selected):
             selected.append({'source': media['path'], 'time': t, 'score': float(scores[i]),
                              'source_duration': media['duration']})
-    return selected
+    return selected + excluded
 
 
 def normalize(values):
@@ -283,20 +313,36 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
     planner = _beat_segments if rhythm_usable(music) else _attack_segments
     # Recorded in the analysis sidecar: the pacing actually used for this timeline.
     music['cut_mode'] = 'beats' if planner is _beat_segments else 'attacks'
+    segments = planner(music, settings, duration, cinematic)
+    # Hero placement: the strongest moments are reserved for the most intense music
+    # (the drop/climax) so they always make the cut, instead of losing to energy matching.
+    heroes = {}
+    if cinematic and not ordered and len(segments) >= 3:
+        count = min(3, len(segments)//3)
+        best = sorted(ranked, key=lambda c: (-c['score'], c['source'], c['time']))[:count]
+        intense = sorted(range(len(segments)), key=lambda i: (-segments[i][3], i))
+        for index, candidate in zip(sorted(intense[:count]), sorted(best, key=lambda c: c['score'])):
+            heroes[index] = candidate
+    reserved = {id(c) for c in heroes.values()}
     clips = []
     used = {c['source']: [] for c in ranked+excluded}
     for c in excluded:
-        used[c['source']].append((max(0.0, c['time']-1), min(c['source_duration'], c['time']+1)))
-    for length,profile,target,desired,accents in planner(music, settings, duration, cinematic):
+        a, b = c.get('span') or (c['time']-1, c['time']+1)
+        used[c['source']].append((max(0.0, a), min(c['source_duration'], b)))
+    for index,(length,profile,target,desired,accents) in enumerate(segments):
         offset=source_offset(target,length,profile)
         choice = None
         shot_pool = ranked
         if cinematic and not ordered:
             # Build toward stronger activity, then give the closing message room.
             last_source = clips[-1].source if clips else None
-            shot_pool = sorted(ranked,key=lambda c:(c['source']==last_source,
-                                                    abs(c['score']-desired),c.get('story_rank',1e9),
-                                                    c['source'],c['time']))
+            shot_pool = sorted((c for c in ranked if id(c) not in reserved),
+                               key=lambda c:(c['source']==last_source,
+                                             abs(c['score']-desired),c.get('story_rank',1e9),
+                                             c['source'],c['time']))
+            if index in heroes:
+                shot_pool = [heroes[index]]+shot_pool
+                reserved.discard(id(heroes[index]))
         # Try every genuine candidate before filling an interval beside an old one.
         for fallback in (False, True):
             for candidate in shot_pool:
@@ -304,7 +350,10 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
                     continue
                 start = min(max(0, candidate['time']-offset), candidate['source_duration']-length)
                 starts = ([0.0] + [b for a,b in used[candidate['source']]]) if fallback else [start]
-                if not fallback and abs(start+offset-candidate['time'])>1e-5:
+                if not fallback and abs(start+offset-candidate['time'])>1e-5 and \
+                        not start+.1*length <= candidate['time'] <= start+.9*length:
+                    # Exact musical anchoring is impossible at the source edge; still use the
+                    # moment if it stays well inside the shot rather than skipping to filler.
                     continue
                 starts.sort(key=lambda value: abs(value-start))
                 for proposed in starts:
@@ -323,7 +372,8 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
             break
         candidate,start = choice
         anchored=abs(start+offset-candidate['time'])<=1e-5
-        clips.append(Clip(candidate['source'],start,length,candidate['score'] if anchored else 0,profile,
+        contained=start<=candidate['time']<=start+length
+        clips.append(Clip(candidate['source'],start,length,candidate['score'] if contained else 0,profile,
                           candidate['time'] if anchored else None,target if anchored else None,accents))
         used[candidate['source']].append((start, start+length))
     if not clips:
@@ -554,9 +604,10 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         analysis.update(excerpt_grid(whole, music_start, duration))
         analysis['cut_mode'] = 'beats'
     candidates = []
+    screen_report = {}
     for source in sources:
         LOG.info('Analyzing %s', source['path'])
-        candidates.extend(analyze_gameplay(source, settings))
+        candidates.extend(analyze_gameplay(source, settings, screen_report))
     ai_plan = None
     vision = None
     if ai_editor is not None:
@@ -584,7 +635,8 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     report = render(timeline, output)
     timeline.save(sidecars[0])
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan,
-                                       'ai_editor': vision}, indent=2))
+                                       'ai_editor': vision,
+                                       'screen_analysis': screen_report}, indent=2))
     report['ai_director'] = 'ollama' if ai_model else ('claude vision' if vision else 'heuristic')
     if vision:
         report['ai_editor'] = {k: vision[k] for k in ('model','reviewed','usable','events') if k in vision}

@@ -95,3 +95,21 @@ optical-flow retiming, smooth velocity curves, color management/grading, sound e
 automated reference/narration selection, theology review and reference-style visual evaluation
 remain unimplemented. Real gameplay, licensed music and narration should be evaluated together
 before claiming professional artistic quality. Generated test patterns test mechanics only.
+
+
+### Non-gameplay exclusion, audio transients and hero placement (implemented)
+
+- **HUD presence** (`screen_analysis.py`): persistent HUD edges are learned from the footage's keyframes
+  (pixels that are an edge in ≥60% of samples). Each analysis frame's HUD presence is measured relative
+  to the median; below 0.35 the span is excluded (padded 0.5 s) and reserved so no shot or fallback fill
+  covers it, between 0.35 and 0.6 the score ramps down. Footage with no stable HUD (<120 mask pixels)
+  is never excluded. Calibrated on a hand-labelled Xonotic duel (CC BY-SA 4.0): 4 min train + 5 min
+  held-out. All death/scoreboard spans were found in both; at the training-chosen threshold 0.5 the
+  held-out clip also had 3 short respawn-HUD false spans; 0.35 (chosen after seeing held-out data, so
+  not independently validated) removed them. Hand labels at 2 s spacing missed two scoreboard spans
+  the detector found. One game only; other games' HUDs are unmeasured.
+- **Audio transients**: broadband positive spectral flux of gameplay audio (gunshots, explosions, impacts)
+  now contributes 25% of a candidate's activity score (motion 55%, loudness 20%). Loud ≠ kill.
+- **Hero placement**: in cinematic heuristic edits the top 1–3 moments are reserved for the most intense
+  music segments, so the best moment always makes the cut on the loudest part of the song. A moment
+  at a source edge that cannot be exactly beat-anchored is still used if it sits inside the shot.

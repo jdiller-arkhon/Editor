@@ -144,6 +144,20 @@ class BeatDirectorTests(unittest.TestCase):
             if clip.anchor_output is not None:
                 self.assertLess(min(abs(start+clip.anchor_output-b) for b in music['beats']), 1e-6)
 
+    def test_strongest_moments_land_on_the_loudest_music(self):
+        music, settings = self.music(), Settings()
+        candidates = [{'source': 's', 'time': float(t), 'score': .3, 'source_duration': 200}
+                      for t in range(4, 190, 6)]
+        for c in candidates[10:24]:
+            c['score'] = .95           # plenty of strong clips that match loud music closely
+        candidates[5]['score'] = 1.0   # the one great moment
+        timeline = direct(candidates, music, 'song', settings, 30, cinematic=True)
+        starts = np.cumsum([0]+[c.duration for c in timeline.clips[:-1]])
+        hero = [(s, c) for s, c in zip(starts, timeline.clips) if c.start <= 34 <= c.start+c.duration]
+        self.assertEqual(len(hero), 1)
+        self.assertGreater(hero[0][0], 15.2)   # placed after the measured lift, in the loud half
+        self.assertAlmostEqual(hero[0][1].score, 1.0)
+
     def test_infeasible_bounds_fall_back_without_inventing_beats(self):
         music = self.music()
         music['beats'] = music['beats'][:3]

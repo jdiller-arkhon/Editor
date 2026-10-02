@@ -507,11 +507,12 @@ class Studio(QMainWindow):
         self.job.start()
 
     def show_analysis(self,candidates):
-        ranked=sorted(candidates,key=lambda c:-c['score'])
+        skipped=[c for c in candidates if c.get('exclude')]
+        ranked=sorted((c for c in candidates if not c.get('exclude')),key=lambda c:-c['score'])
         if ranked:
             top=ranked[0]
-            self.analysis_label.setText(f"SCENE ANALYSIS\n{len(ranked)} candidate moments\nTop activity: {top['score']:.3f} (not confidence)\n{Path(top['source']).name} at {top['time']:.2f}s\nSemantic game-event detection is planned.")
-        self.status.setText(f'Analysis complete • {len(ranked)} motion/audio candidate moments. Ready to generate.')
+            self.analysis_label.setText(f"SCENE ANALYSIS\n{len(ranked)} candidate moments\nTop activity: {top['score']:.3f} (not confidence)\n{Path(top['source']).name} at {top['time']:.2f}s\n{len(skipped)} non-gameplay spans skipped (HUD hidden: deaths, scoreboards, menus).")
+        self.status.setText(f'Analysis complete • {len(ranked)} candidate moments, {len(skipped)} non-gameplay spans skipped. Ready to generate.')
 
     def import_media(self):
         files,_ = QFileDialog.getOpenFileNames(self,'Import gameplay','','Video (*.mp4 *.mkv *.mov *.webm);;All files (*)')
