@@ -7,12 +7,14 @@ LOSSLESS = ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'yuv444p',
             '-c:a', 'pcm_s24le', '-threads', '2']
 
 
-def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=None):
+def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=None, handles=None):
     """Replace each cut neighbourhood with a two-image blend of identical duration.
 
-    Held edge frames provide transition handles without consuming/repeating source
-    intervals elsewhere. At most two shots are decoded in each transition process.
+    ``handles[i] = (pre, post)``: rendered footage just before/after shot ``i`` (path and
+    frame count), used so the blend shows real motion past the cut. Where no unused footage
+    exists the edge frame is held instead. The cut clock never moves.
     """
+    handles = handles or [(None, None)]*len(paths)
     fps = settings.fps
     frames = [round(d * fps) for d in durations]
     halves = [0 if per_cut and per_cut[i] == 'cut' else
@@ -46,11 +48,28 @@ def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=
         if per_cut:
             effect = per_cut[i]
         transition = Path(temporary) / f'blend-{i:05d}.mkv'
+        post, pre = handles[i][1], handles[i+1][0]
+        inputs = ['-i', str(path), '-i', str(paths[i+1])]
+        if post and post[1] >= after:
+            inputs += ['-i', str(post[0])]
+            x = (f'[0:v]trim=start_frame={frames[i]-after},setpts=PTS-STARTPTS[xa];'
+                 f'[{len(inputs)//2-1}:v]trim=end_frame={after},setpts=PTS-STARTPTS[xb];'
+                 f'[xa][xb]concat=n=2:v=1:a=0,settb=AVTB[x]')
+        else:
+            x = (f'[0:v]trim=start_frame={frames[i]-after},setpts=PTS-STARTPTS,'
+                 f'tpad=stop_mode=clone:stop_duration={half},trim=end_frame={2*after},settb=AVTB[x]')
+        if pre and pre[1] >= after:
+            inputs += ['-i', str(pre[0])]
+            y = (f'[{len(inputs)//2-1}:v]trim=start_frame={pre[1]-after},setpts=PTS-STARTPTS[ya];'
+                 f'[1:v]trim=end_frame={after},setpts=PTS-STARTPTS[yb];'
+                 f'[ya][yb]concat=n=2:v=1:a=0,settb=AVTB[y]')
+        else:
+            y = (f'[1:v]trim=end_frame={after},setpts=PTS-STARTPTS,'
+                 f'tpad=start_mode=clone:start_duration={half},trim=end_frame={2*after},settb=AVTB[y]')
+        kind = {(True, True): 'source footage', (False, False): 'held edge frames'}.get(
+            (bool(post and post[1] >= after), bool(pre and pre[1] >= after)), 'mixed source/held')
         graph = (
-            f'[0:v]trim=start_frame={frames[i]-after},setpts=PTS-STARTPTS,'
-            f'tpad=stop_mode=clone:stop_duration={half},trim=end_frame={2*after},settb=AVTB[x];'
-            f'[1:v]trim=end_frame={after},setpts=PTS-STARTPTS,'
-            f'tpad=start_mode=clone:start_duration={half},trim=end_frame={2*after},settb=AVTB[y];'
+            f'{x};{y};'
             f'[x][y]xfade=transition={effect}:duration={length}:offset=0,'
             f'trim=end_frame={2*after},setpts=PTS-STARTPTS[v];'
             f'[0:a]atrim=start={durations[i]-half}:duration={half},asetpts=PTS-STARTPTS,'
@@ -58,10 +77,10 @@ def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=
             f'[1:a]atrim=duration={half},asetpts=PTS-STARTPTS,afade=t=in:d={half},'
             f'adelay={half*1000}:all=1,apad,atrim=duration={length}[a1];'
             f'[a0][a1]amix=inputs=2:duration=first:normalize=0[a]')
-        run(['ffmpeg','-v','error','-i',str(path),'-i',str(paths[i+1]),
+        run(['ffmpeg','-v','error']+inputs+[
              '-filter_complex_threads','1','-filter_complex',graph,'-map','[v]','-map','[a]',
              '-t',str(length)] + LOSSLESS + [str(transition)])
         pieces.append((transition,length))
         boundaries.append(dict(at=position,start=position-half,duration=length,effect=effect,
-                               handles='held edge frames'))
+                               handles=kind))
     return pieces, boundaries

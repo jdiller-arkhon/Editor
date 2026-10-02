@@ -548,6 +548,48 @@ def accent_filter(accents, settings):
             f"d=1:s={settings.width}x{settings.height}:fps={fps}")
 
 
+def render_handles(timeline, settings, temporary):
+    """Unused source footage just before/after each shot, rendered like the shot itself.
+
+    Returns [(pre, post)] with (path, frames) or None. Footage that another shot uses (or that
+    lies outside the source) is never taken, so handles cannot repeat footage on screen.
+    """
+    length = timeline.transition_duration/2+1/settings.fps
+    frames = round(length*settings.fps)
+    blended = [True]*(len(timeline.clips)-1)
+    if timeline.boundary_transitions:
+        blended = [b != 'cut' for b in timeline.boundary_transitions]
+    durations = {}
+    look = craft.LOOKS[timeline.look]
+    chain = (f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:'
+             f'out_color_matrix=bt709:out_range=tv,pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,'
+             f'setsar=1,'+(look+',' if look else '')+f'fps={settings.fps},format=yuv444p')
+
+    def free(clip, a, b):
+        return a >= 0 and b <= durations[clip.source]+1e-6 and all(
+            o is clip or o.source != clip.source or b <= o.start+1e-6 or a >= o.start+o.duration-1e-6
+            for o in timeline.clips)
+
+    def write(clip, start, name):
+        path = Path(temporary)/name
+        run(['ffmpeg', '-v', 'error', '-ss', f'{start:.6f}', '-i', clip.source, '-an', '-vf', chain,
+             '-frames:v', str(frames)] + LOSSLESS[:6] + ['-threads', '2', str(path)])
+        count = int(run(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries',
+                         'stream=nb_read_frames', '-of', 'csv=p=0', str(path)]).stdout.decode().strip() or 0)
+        return (path, count) if count >= frames else None
+    result = []
+    for i, clip in enumerate(timeline.clips):
+        durations.setdefault(clip.source, probe(clip.source)['duration'])
+        pre = post = None
+        if i and blended[i-1] and free(clip, clip.start-length, clip.start):
+            pre = write(clip, clip.start-length, f'pre-{i:05d}.mkv')
+        end = clip.start+clip.duration   # every profile consumes exactly its duration
+        if i < len(blended) and blended[i] and free(clip, end, end+length):
+            post = write(clip, end, f'post-{i:05d}.mkv')
+        result.append((pre, post))
+    return result
+
+
 def render(timeline, output):
     timeline.validate()
     settings = Settings(**timeline.settings)
@@ -636,12 +678,15 @@ def render(timeline, output):
                  '-t',str(clip.duration)] + LOSSLESS + [str(temporary/f'{i:05d}.mkv')],cwd=temporary)
         pieces = [(temporary/f'{i:05d}.mkv',clip.duration) for i,clip in enumerate(timeline.clips)]
         boundaries = []
+        handles = None
+        if timeline.transition in BLENDS and len(pieces)>1 and timeline.reframe=='fit':
+            handles = render_handles(timeline, settings, temporary)
         if timeline.transition in BLENDS and len(pieces)>1:
             LOG.info('Compositing %d transition boundaries',len(pieces)-1)
             jobs.report(.75,'Compositing transitions')
             pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
                                         timeline.transition,timeline.transition_duration,temporary,run,
-                                        timeline.boundary_transitions or None)
+                                        timeline.boundary_transitions or None, handles)
         listing = temporary/'clips.txt'
         listing.write_text(''.join(f"file '{path.name}'\nduration {length:.9f}\n" for path,length in pieces))
         pending = temporary/'final.mp4'

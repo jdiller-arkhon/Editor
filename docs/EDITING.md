@@ -149,3 +149,12 @@ before claiming professional artistic quality. Generated test patterns test mech
 - Ramp shots now anchor their moment at mid-shot, where the speed curve is slowest.
 - Desktop quick-create: clean look, motion interpolation, motion blur, swishes, auto reframe; all
   adjustable in Creative controls.
+
+
+### Real transition handles (implemented)
+
+Blends now use the real footage just past each cut (half the transition, plus one frame) instead of
+holding the edge frame. A handle is only taken when that source footage is inside the file and not
+used by any other shot, so nothing repeats on screen; otherwise the edge frame is held as before.
+Each boundary reports `handles`: `source footage`, `mixed source/held` or `held edge frames`. Shot
+timing and total duration are unchanged. Not used with the follow reframe (its crop path is per shot).

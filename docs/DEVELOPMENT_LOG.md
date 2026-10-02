@@ -164,3 +164,6 @@
 ## 2026-10-02 — Windows CI result and installer deferral
 - Windows CI: 59/60 core tests passed on the first run. The failure was real: cancel killed only Chocolatey's ffmpeg launcher shim while the real ffmpeg child kept running. jobs.run now starts each process in its own group/session and kills the whole tree (taskkill /T on Windows, killpg elsewhere); a launcher test reproduces the bug on Linux (fails without the fix) and passes with it.
 - User asked not to build installers yet: the PyInstaller spec and CI packaging steps were removed (recoverable from history at d8371be). Windows tests and desktop checks remain in CI; `--self-check` stays as a cheap diagnostic.
+
+## 2026-10-02 — Real transition handles (Claude continuation)
+- Blends previously froze the edge frames; now render_handles() renders unused adjacent footage and compose() builds blends from it. Test compares two renders with identical shots where one forbids the handle: the outgoing shot keeps moving through the dissolve only with handles. First measurement attempts were confounded (soft wipe mixing; non-comparable source times) and were redone. 62 core tests OK.
