@@ -29,41 +29,49 @@ STORY_TONES = {
 }
 
 STYLE = '''
-QWidget {background:#101012;color:#eeeeef;font-family:Inter,Segoe UI,sans-serif;font-size:12px;}
-QMainWindow {background:#0a0a0c;}
-QFrame#panel {background:qlineargradient(x1:0,y1:0,x2:0.7,y2:1,stop:0 #232326,stop:0.16 #19191c,stop:1 #141416);border:1px solid #353538;border-radius:14px;}
+QWidget {background:#ffffff;color:#141416;font-family:Inter,Segoe UI,sans-serif;font-size:12px;}
+QMainWindow {background:#f6f6f7;}
+QFrame#panel {background:#ffffff;border:1px solid #e6e6e9;border-radius:14px;}
 QLabel {background:transparent;}
-QLabel#brand {font-size:22px;font-weight:700;letter-spacing:3px;}
-QLabel#title {font-size:19px;font-weight:600;}
-QLabel#muted {color:#96969e;}
-QLabel#eyebrow {color:#bebec5;font-size:10px;font-weight:600;letter-spacing:2px;}
-QPushButton {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #2c2c30,stop:1 #202024);border:1px solid #424246;border-radius:8px;padding:9px 13px;}
-QPushButton:hover {background:#333337;border-color:#85858c;}
-QPushButton:pressed {background:#17171a;}
-QPushButton:focus {border:1px solid #eeeeef;}
-QPushButton:disabled {color:#66666e;background:#19191c;border-color:#29292d;}
-QPushButton#primary {background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #fafafa,stop:1 #c3c3cb);color:#17171a;font-weight:700;border:1px solid #ffffff;padding:12px 24px;}
-QPushButton#primary:hover {background:#ffffff;}
-QListWidget,QTableWidget {background:#111113;border:1px solid #303034;border-radius:7px;alternate-background-color:#19191c;selection-background-color:#3b3b42;}
-QHeaderView::section {background:#252529;color:#c1c1c9;border:0;padding:7px;}
-QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#121215;border:1px solid #3a3a40;border-radius:7px;padding:8px;selection-background-color:#555560;}
-QLineEdit:focus,QComboBox:focus {border-color:#babac5;}
+QLabel#brand {font-size:22px;font-weight:700;letter-spacing:3px;color:#0d0d0f;}
+QLabel#title {font-size:19px;font-weight:600;color:#0d0d0f;}
+QLabel#muted {color:#6c6c75;}
+QLabel#eyebrow {color:#8a8a93;font-size:10px;font-weight:600;letter-spacing:2px;}
+QPushButton {background:#ffffff;border:1px solid #dcdce0;border-radius:8px;padding:9px 13px;color:#141416;}
+QPushButton:hover {background:#f4f4f6;border-color:#b9b9c0;}
+QPushButton:pressed {background:#ebebee;}
+QPushButton:focus {border:1px solid #141416;}
+QPushButton:disabled {color:#b2b2b9;background:#fafafa;border-color:#ececef;}
+QPushButton#primary {background:#111113;color:#ffffff;font-weight:700;border:1px solid #111113;padding:12px 24px;}
+QPushButton#primary:hover {background:#2a2a2e;border-color:#2a2a2e;}
+QPushButton#primary:pressed {background:#000000;}
+QPushButton#primary:disabled {background:#d4d4d8;border-color:#d4d4d8;color:#ffffff;}
+QListWidget,QTableWidget {background:#ffffff;border:1px solid #e6e6e9;border-radius:7px;alternate-background-color:#fafafb;selection-background-color:#e9e9ee;selection-color:#0d0d0f;gridline-color:#efeff2;}
+QHeaderView::section {background:#f7f7f8;color:#55555d;border:0;border-bottom:1px solid #e6e6e9;padding:7px;font-weight:600;}
+QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#ffffff;border:1px solid #dcdce0;border-radius:7px;padding:8px;selection-background-color:#d9d9e0;selection-color:#0d0d0f;}
+QLineEdit:focus,QComboBox:focus,QSpinBox:focus,QDoubleSpinBox:focus {border-color:#141416;}
+QComboBox::drop-down {border:0;width:26px;}
+QComboBox::down-arrow {image:url(CHEVRON);width:10px;height:6px;}
+QComboBox QAbstractItemView {background:#ffffff;border:1px solid #dcdce0;selection-background-color:#efeff2;selection-color:#0d0d0f;}
 QCheckBox {background:transparent;padding:4px 0;}
-QProgressBar {border:0;background:#252529;border-radius:3px;height:4px;}
-QProgressBar::chunk {background:#d6d6df;}
-QSlider::groove:horizontal {height:3px;background:#34343b;}
-QSlider::handle:horizontal {background:#ededf2;width:9px;margin:-4px 0;border-radius:4px;}
-QFrame#rail {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #18181b,stop:1 #09090b);border-right:1px solid #303034;}
-QPushButton#nav {text-align:left;background:transparent;border:1px solid transparent;padding:11px 12px;color:#adadb5;}
-QPushButton#nav:hover {background:#242429;border-color:#43434b;color:#ffffff;}
-QPushButton#nav:checked {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #34343b,stop:1 #222227);border-color:#50505b;color:#ffffff;}
+QProgressBar {border:0;background:#ececef;border-radius:3px;height:4px;}
+QProgressBar::chunk {background:#141416;}
+QSlider::groove:horizontal {height:3px;background:#dedee3;}
+QSlider::handle:horizontal {background:#141416;width:9px;margin:-4px 0;border-radius:4px;}
+QFrame#rail {background:#ffffff;border-right:1px solid #ececef;}
+QPushButton#nav {text-align:left;background:transparent;border:1px solid transparent;padding:11px 12px;color:#5d5d66;}
+QPushButton#nav:hover {background:#f4f4f6;color:#0d0d0f;}
+QPushButton#nav:checked {background:#f0f0f2;border-color:#e3e3e7;color:#0d0d0f;font-weight:600;}
 QPushButton#workflow {font-size:11px;text-align:left;padding:10px;}
-QSplitter::handle {background:#101012;width:8px;height:8px;}
+QSplitter::handle {background:#f6f6f7;width:8px;height:8px;}
 QScrollArea {border:0;background:transparent;}
-QScrollBar:vertical {background:#18181c;width:8px;margin:0;}
-QScrollBar::handle:vertical {background:#45454d;border-radius:4px;min-height:24px;}
+QScrollBar:vertical {background:transparent;width:8px;margin:0;}
+QScrollBar::handle:vertical {background:#d6d6db;border-radius:4px;min-height:24px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
+QToolTip {background:#111113;color:#ffffff;border:0;padding:6px;}
 '''
+STYLE = STYLE.replace('CHEVRON', (Path(__file__).parent/'resources'/'chevron.svg').as_posix())
+
 
 
 
@@ -78,7 +86,7 @@ def panel():
     frame = QFrame()
     frame.setObjectName('panel')
     shadow = QGraphicsDropShadowEffect(frame)
-    shadow.setBlurRadius(22); shadow.setOffset(0,6); shadow.setColor(QColor(0,0,0,150))
+    shadow.setBlurRadius(28); shadow.setOffset(0,4); shadow.setColor(QColor(16,16,24,18))
     frame.setGraphicsEffect(shadow)
     layout = QVBoxLayout(frame)
     layout.setContentsMargins(18,18,18,18)
@@ -205,7 +213,7 @@ class Studio(QMainWindow):
         view.addWidget(label('02  /  PREVIEW','eyebrow'))
         self.preview_title = label('Your footage, in focus','title')
         view.addWidget(self.preview_title)
-        self.video = QVideoWidget()
+        self.video = QVideoWidget(); self.video.setStyleSheet("background:#000000;")
         self.video.setMinimumHeight(150)
         self.screen = QStackedWidget();self.screen.setMinimumHeight(150);self.screen.setMaximumHeight(260)
         empty = CinemaCanvas(); empty_layout = QVBoxLayout(empty)

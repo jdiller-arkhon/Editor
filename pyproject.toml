@@ -21,4 +21,4 @@ montage-studio = "montage_editor.desktop:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-montage_editor = ["resources/*.jpg"]
+montage_editor = ["resources/*.jpg", "resources/*.svg", "resources/fonts/*.ttf"]
