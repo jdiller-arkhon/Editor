@@ -27,6 +27,16 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(window.story()['dialogue'][0]['at'],1)
         window.close()
 
+    def test_completed_export_reports_measured_beat_grid_only_when_used(self):
+        window=Studio()
+        with patch.object(Studio,'save_preferences'):
+            base=dict(duration=10,width=1920,height=1080,shortened=False)
+            window.completed(dict(base,music_alignment=dict(mode='beats',tempo_bpm=127.6)),'out.mp4',True)
+            self.assertIn('measured 128 BPM beat grid',window.status.text())
+            window.completed(dict(base,music_alignment=dict(mode='attacks',tempo_bpm=129.5)),'out.mp4',True)
+            self.assertNotIn('BPM',window.status.text())
+        window.close()
+
     def test_reference_workspace_and_real_analysis(self):
         window=Studio()
         self.assertFalse(window.banner.art.isNull())

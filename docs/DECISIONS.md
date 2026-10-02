@@ -38,3 +38,15 @@ Do not equate CRF/1080p with native detail, semantic editing judgment or studio-
 ## 2026-10-02 — Subtle story direction and Claude continuity
 
 Keep the workspace visually neutral and default faith influence to hope/perseverance with an editable original closing line. Offer explicit Christian and neutral choices in Creative controls. Preserve custom lines across tone changes and persisted settings; tone changes replace only recognized preset text. Both automatic and manual generation pass the selected line into the real renderer. Keep the repository, branch, tests and development log as the handoff source of truth; root CLAUDE.md and docs/CLAUDE_HANDOFF.md describe tested implementation and concrete regression safeguards.
+
+## 2026-10-02 — Measured beat grid drives cut placement
+
+Cutting on the first spectral-flux attack after the minimum length let hi-hats and fills set the
+edit rhythm (on a kick/snare/hat fixture the attack picker mostly selected off-beat hats). Cuts now
+follow a measured beat grid when its confidence is at least 0.5, chosen by a global dynamic-programming
+path rather than greedily, so phrase boundaries reachable only by planning ahead are still cut.
+Downbeats assume 4/4; four-bar phrases are an explicit assumption, energy changes are measured.
+The attack planner remains the fallback and the analysis sidecar records which planner was used.
+No Timeline schema change: replay of existing projects is unaffected. Onset times gained a fixed
+latency compensation (half analysis window plus one hop): onsets are now reported ~42 ms later
+than before, closer to the true attack; this was calibrated on synthetic attacks, not real music.

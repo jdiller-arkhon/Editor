@@ -563,6 +563,9 @@ class Studio(QMainWindow):
         self.save_preferences()
         self.status.setText(f"Validated export • {report['duration']:.2f}s • {report['width']} × {report['height']} • "+
                             ('Shortened to available media.' if report.get('shortened') else 'Full decode passed.'))
+        rhythm=report.get('music_alignment') or {}
+        if rhythm.get('mode')=='beats' and rhythm.get('tempo_bpm'):
+            self.status.setText(self.status.text()+f" Cut to a measured {rhythm['tempo_bpm']:.0f} BPM beat grid.")
         self.open_button.setEnabled(True); self.preview_file(path)
         if not replay: self.show_timeline(Timeline.load(Path(path).with_suffix('.timeline.json')))
         self.status.setText(self.status.text()+' Saved to '+path)

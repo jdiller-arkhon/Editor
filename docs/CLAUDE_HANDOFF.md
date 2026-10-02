@@ -48,7 +48,7 @@ Latest direction: improve UI before moving development to Claude; make the Chris
 **Core:** Python 3.11+, NumPy, FFmpeg/FFprobe; optional PySide6 desktop. CLI entrypoints `montage-editor`, `montage-studio`; package version 0.1.0.
 
 - Media probing/import, generic motion/audio activity candidate scoring; no game-specific semantics.
-- Musical attack detection: positive log spectral flux at 10 ms hops. Energy is sampled at 50 ms. Attacks are not a validated beat/downbeat grid.
+- Musical attack detection: positive log spectral flux at 10 ms hops. Energy is sampled at 50 ms. Since 2026-10-02 (Claude session) `rhythm.py` adds a measured beat grid (tempo, beats, 4/4 downbeat phase, phrase marks, confidence) used for beat-aligned cut planning when confident; see EDITING.md and DEVELOPMENT_LOG.
 - Optional energetic excerpt selection from the chosen local song, based on energy/variation. `music_start` is used consistently for analysis, audio rendering and project replay. Local title matching scans filenames only; no streaming/downloading service.
 - Deterministic unused-interval selection. Try all genuine anchored candidates before fallback intervals; never silently reuse footage to fill requested duration. Source/music limits can shorten the result; the report says so.
 - Cinematic activity build/resolve ordering and source diversity. Exact candidate source/output anchors persisted only when achievable.

@@ -4,6 +4,8 @@ Run `python -m unittest discover -s tests -v`.
 
 Foundation tests verify settings validation and environment discovery. Timeline tests verify serialization, invalid bounds and non-overlapping direction. Mandatory integration generates 12 seconds of moving synthetic video with audio and 8 seconds of pulsed music, analyzes both, renders a six-second MP4, checks onset candidates, reloads/re-renders the timeline and fully decodes both exports. It also verifies refusal to overwrite and rejects invalid/duplicate imports.
 
+`test_rhythm.py` writes synthetic songs with known tempo, beat offset, downbeat accents and an energy lift, decodes them through FFmpeg and checks tempo (±0.5 BPM), beat timing (<20 ms), downbeat phase, a single lift mark and noise rejection. Director tests check frame-quantized beat cuts, phrase hits, energy-driven shot length, impact placement and the infeasible-grid fallback. An end-to-end render checks the automatic excerpt starts on a downbeat and every cut of the exported timeline sits on a beat. These were mutation-checked (forcing attack pacing and shifting downbeat phase both fail).
+
 Synthetic tests verify mechanics, not real gameplay event detection or editorial quality. No actual gameplay/music was supplied for this session. Windows and GPU execution remain unvalidated. CI installs FFmpeg and tests the CPU pipeline; it does not silently skip media validation.
 
 Cinematic coverage additionally checks retimed source consumption and anchor mapping,

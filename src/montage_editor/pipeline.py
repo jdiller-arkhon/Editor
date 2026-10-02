@@ -15,6 +15,7 @@ from .storytelling import DialogueCue
 from .editing import retime_filters, source_offset
 from .transitions import BLENDS, LOSSLESS, compose
 from .music_sections import choose_section
+from .rhythm import alignment_report, beat_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
 
@@ -58,7 +59,9 @@ def music_analysis(media, duration, start=0):
         raise ValueError('Selected music is silent; choose an audible soundtrack')
     # Spectral changes reveal attacks even when overall loudness stays similar.
     rate, hop, window = 8000, 80, 512
-    flux, previous = [], None
+    # A Hann-windowed attack produces its largest flux when centred in the window.
+    latency = window/2/rate+hop/rate
+    flux, low_flux, previous = [], [], None
     for chunk_start in np.arange(0, duration, 30):
         raw = run(['ffmpeg','-v','error','-ss',str(start+chunk_start),'-i',media['path'],
                    '-t',str(min(30,duration-chunk_start)),'-vn','-ac','1','-ar',str(rate),
@@ -69,19 +72,29 @@ def music_analysis(media, duration, start=0):
             segment = samples[offset:offset+window]
             block[:len(segment)] = segment
             spectrum = np.log1p(abs(np.fft.rfft(block*np.hanning(window))))
-            flux.append(float(np.maximum(spectrum-previous,0).mean()) if previous is not None else 0)
+            rise = np.maximum(spectrum-previous,0) if previous is not None else spectrum*0
+            flux.append(float(rise.mean()))
+            # Bins below ~200 Hz carry kick/bass accents used for downbeat phase.
+            low_flux.append(float(rise[1:14].mean()))
             previous = spectrum
     onset = np.asarray(flux)
     threshold = max(float(np.quantile(onset,.8)),float(onset.max())*.15)
     peaks = []
     for i in range(1,len(onset)-1):
-        t = i*.01
+        t = i*.01+latency
         if onset[i]>threshold and onset[i]>=onset[i-1] and onset[i]>=onset[i+1]:
             if not peaks or t-peaks[-1]>=.25:
                 peaks.append(round(t,3))
-    return {'onsets':peaks,'energy':energy.tolist(),'hop_seconds':.05,
-            'onset_hop_seconds':.01,'source_start':start,
-            'method':'positive log spectral flux; attacks, not semantic beats or downbeats'}
+    grid = beat_grid(onset,np.asarray(low_flux),energy,latency=latency)
+    result = {'onsets':peaks,'energy':energy.tolist(),'hop_seconds':.05,
+              'onset_hop_seconds':.01,'onset_latency_seconds':latency,'source_start':start,
+              'method':'positive log spectral flux; attacks, not semantic beats or downbeats',
+              'tempo_bpm':grid['tempo_bpm'],'beats':grid['beats'],'downbeats':grid['downbeats'],
+              'bars':grid['bars'],'phrases':grid['phrases'],'beat_confidence':grid['confidence'],
+              'beat_evidence':{k:grid.get(k) for k in ('periodicity','beat_alignment','steadiness',
+                               'downbeat_confidence','method')}}
+    result['cut_mode'] = 'beats' if rhythm_usable(result) else 'attacks'
+    return result
 
 
 def analyze_gameplay(media, settings):
@@ -195,13 +208,9 @@ class Timeline:
         return result
 
 
-def direct(candidates, music, music_path, settings, duration, ordered=False, cinematic=False):
-    if not candidates:
-        raise ValueError('No candidate moments')
-    ranked = candidates if ordered else sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time']))
-    clips = []
-    used = {c['source']: [] for c in ranked}
-    position = 0.0
+def _attack_segments(music, settings, duration, cinematic):
+    """Original attack-driven pacing: cut on the first attack after the minimum length."""
+    segments, position = [], 0.0
     while position < duration-1e-6:
         remaining = duration-position
         cuts = [t for t in music['onsets']
@@ -209,16 +218,51 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
         length = min(remaining, cuts[0]-position if cuts else settings.maximum_clip)
         # Cuts must occupy complete output frames, avoiding cumulative concat drift.
         length=min(remaining,max(1/settings.fps,round(length*settings.fps)/settings.fps))
-        profile='impact' if cinematic and len(clips)%3==1 and length>=1 else 'normal'
+        profile='impact' if cinematic and len(segments)%3==1 and length>=1 else 'normal'
         interior=[t-position for t in music['onsets'] if position+.25*length<=t<=position+.75*length]
         target=min(interior,key=lambda t:abs(t-length*.5)) if interior else length*.5
+        phase = position/max(duration,1e-6)
+        desired = .4 if phase < .2 else (.95 if phase < .8 else .35)
+        segments.append((length,profile,target,desired))
+        position += length
+    return segments
+
+
+def _beat_segments(music, settings, duration, cinematic):
+    """Beat-grid pacing: shot length follows song energy; impacts land on lifts/phrases."""
+    segments, previous_impact = [], False
+    plan = plan_cuts(music, settings, duration)
+    if not plan:
+        # The beat grid cannot satisfy the clip-length bounds; keep attack pacing.
+        music['cut_mode'] = 'attacks (beat path infeasible for clip bounds)'
+        return _attack_segments(music, settings, duration, cinematic)
+    for length, tags in plan:
+        starts = tags['starts_phrase']
+        lifted = 'rise' in starts or ('grid' in starts and tags['energy'] >= .5)
+        profile = 'impact' if (cinematic and lifted and not previous_impact and length >= 1) else 'normal'
+        previous_impact = profile == 'impact'
+        phase = tags['start']/max(duration,1e-6)
+        # Match gameplay activity to musical intensity; leave the ending calmer for the title.
+        desired = .35 if phase >= .85 else .3+.65*tags['energy']
+        segments.append((length,profile,tags['anchor'],desired))
+    return segments
+
+
+def direct(candidates, music, music_path, settings, duration, ordered=False, cinematic=False):
+    if not candidates:
+        raise ValueError('No candidate moments')
+    ranked = candidates if ordered else sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time']))
+    planner = _beat_segments if rhythm_usable(music) else _attack_segments
+    # Recorded in the analysis sidecar: the pacing actually used for this timeline.
+    music['cut_mode'] = 'beats' if planner is _beat_segments else 'attacks'
+    clips = []
+    used = {c['source']: [] for c in ranked}
+    for length,profile,target,desired in planner(music, settings, duration, cinematic):
         offset=source_offset(target,length,profile)
         choice = None
         shot_pool = ranked
         if cinematic and not ordered:
             # Build toward stronger activity, then give the closing message room.
-            phase = position/max(duration,1e-6)
-            desired = .4 if phase < .2 else (.95 if phase < .8 else .35)
             last_source = clips[-1].source if clips else None
             shot_pool = sorted(ranked,key=lambda c:(c['source']==last_source,
                                                     abs(c['score']-desired),c['source'],c['time']))
@@ -251,7 +295,6 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
         clips.append(Clip(candidate['source'],start,length,candidate['score'] if anchored else 0,profile,
                           candidate['time'] if anchored else None,target if anchored else None))
         used[candidate['source']].append((start, start+length))
-        position += length
     if not clips:
         raise ValueError('Source clips are too short for the selected cut length')
     timeline = Timeline(1, music_path, asdict(settings), clips)
@@ -448,8 +491,13 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     music_start = 0.0
     if story and story.get('auto_music_section'):
         LOG.info('Selecting an energetic section of the chosen soundtrack')
-        envelope = audio_envelope(song['path'],song['duration'])
-        music_start = choose_section(envelope,song['duration'],duration)
+        whole = music_analysis(song, song['duration'])
+        starts = None
+        if rhythm_usable(whole):
+            # Begin on a measured downbeat, preferring four-bar/energy phrase starts.
+            phrases = [p['time'] for p in whole['phrases']]
+            starts = phrases if any(t <= song['duration']-duration for t in phrases) else whole['downbeats']
+        music_start = choose_section(whole['energy'],song['duration'],duration,starts=starts)
     analysis = music_analysis(song, duration, start=music_start)
     candidates = []
     for source in sources:
@@ -482,5 +530,6 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     report['ai_director'] = 'ollama' if ai_model else 'heuristic'
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
+    report['music_alignment'] = alignment_report(timeline, analysis)
     sidecars[2].write_text(json.dumps(report, indent=2))
     return report

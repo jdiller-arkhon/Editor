@@ -40,7 +40,7 @@ class OllamaDirector:
         payload={'model':self.model,'stream':False,'format':SCHEMA,'options':{'temperature':.2,'num_predict':2048},
                  'messages':[{'role':'system','content':
                    'You direct local gaming edits. Use only supplied activity evidence, not imagined kills or visual content. '
-                   'Rank candidate IDs in preferred priority order. The deterministic engine fits clips to music onsets. '
+                   'Rank candidate IDs in preferred priority order. The deterministic engine fits clips to a measured beat grid (or music attacks when no steady beat is found). '
                    'Choose global pacing and one supported transition; prefer cinematic, push or zoom_blend over repeated flashes. No commands, paths, invented media, quotations or effects. '
                    'Christian intent should express humility and hope, not equate in-game kills with divine approval. '
                    'Return only JSON matching this schema: '+json.dumps(SCHEMA)},
