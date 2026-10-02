@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
     QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea, QInputDialog)
 
-from .workspace_widgets import CinemaCanvas, TimelineLanes, CathedralBanner
+from .workspace_widgets import BrandMark, CinemaCanvas, TimelineLanes, CathedralBanner
 from .music_library import find_songs, AUDIO, VIDEO
 from .config import Settings
 from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay
@@ -28,51 +28,80 @@ STORY_TONES = {
                 'Cinematic gameplay montage with a deliberate energy arc, restrained transitions and musical pacing.'),
 }
 
+# Palette: white canvas, ink text, violet→pink primary accent, teal (music) and amber (dialogue).
+INK, MUTED, LINE = '#15131f', '#6b6880', '#e9e7f2'
+VIOLET, PINK, TEAL, AMBER = '#6d4dff', '#ff4f8b', '#11b3a3', '#ffad1f'
+
 STYLE = '''
-QWidget {background:#ffffff;color:#141416;font-family:Inter,Segoe UI,sans-serif;font-size:12px;}
-QMainWindow {background:#f6f6f7;}
-QFrame#panel {background:#ffffff;border:1px solid #e6e6e9;border-radius:14px;}
+QWidget {background:#ffffff;color:#15131f;font-family:Manrope,Segoe UI,sans-serif;font-size:13px;}
+QMainWindow,QWidget#canvas {background:#f7f6fb;}
+QFrame#appbar {background:#ffffff;border-bottom:1px solid #ecebf3;}
+QFrame#panel {background:#ffffff;border:1px solid #ecebf3;border-radius:18px;}
+QFrame#create {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #ffffff,stop:.55 #fbf9ff,stop:1 #fff4f8);border:1px solid #e7e1ff;border-radius:18px;}
+QFrame#dropzone {background:#faf8ff;border:1.5px dashed #c9bdff;border-radius:14px;}
 QLabel {background:transparent;}
-QLabel#brand {font-size:22px;font-weight:700;letter-spacing:3px;color:#0d0d0f;}
-QLabel#title {font-size:19px;font-weight:600;color:#0d0d0f;}
-QLabel#muted {color:#6c6c75;}
-QLabel#eyebrow {color:#8a8a93;font-size:10px;font-weight:600;letter-spacing:2px;}
-QPushButton {background:#ffffff;border:1px solid #dcdce0;border-radius:8px;padding:9px 13px;color:#141416;}
-QPushButton:hover {background:#f4f4f6;border-color:#b9b9c0;}
-QPushButton:pressed {background:#ebebee;}
-QPushButton:focus {border:1px solid #141416;}
-QPushButton:disabled {color:#b2b2b9;background:#fafafa;border-color:#ececef;}
-QPushButton#primary {background:#111113;color:#ffffff;font-weight:700;border:1px solid #111113;padding:12px 24px;}
-QPushButton#primary:hover {background:#2a2a2e;border-color:#2a2a2e;}
-QPushButton#primary:pressed {background:#000000;}
-QPushButton#primary:disabled {background:#d4d4d8;border-color:#d4d4d8;color:#ffffff;}
-QListWidget,QTableWidget {background:#ffffff;border:1px solid #e6e6e9;border-radius:7px;alternate-background-color:#fafafb;selection-background-color:#e9e9ee;selection-color:#0d0d0f;gridline-color:#efeff2;}
-QHeaderView::section {background:#f7f7f8;color:#55555d;border:0;border-bottom:1px solid #e6e6e9;padding:7px;font-weight:600;}
-QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#ffffff;border:1px solid #dcdce0;border-radius:7px;padding:8px;selection-background-color:#d9d9e0;selection-color:#0d0d0f;}
-QLineEdit:focus,QComboBox:focus,QSpinBox:focus,QDoubleSpinBox:focus {border-color:#141416;}
+QWidget#step {background:transparent;}
+QLabel#brand {font-family:Sora;font-size:19px;font-weight:800;letter-spacing:2px;color:#15131f;}
+QLabel#title {font-family:Sora;font-size:18px;font-weight:700;color:#15131f;}
+QLabel#section {font-family:Sora;font-size:15px;font-weight:700;color:#15131f;}
+QLabel#muted {color:#6b6880;}
+QLabel#eyebrow {color:#8c88a3;font-size:10px;font-weight:700;letter-spacing:2px;}
+QLabel#badge {background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #6d4dff,stop:1 #ff4f8b);color:#ffffff;font-family:Sora;font-weight:700;font-size:11px;border-radius:11px;min-width:22px;max-width:22px;min-height:22px;max-height:22px;qproperty-alignment:AlignCenter;}
+QLabel#chip {background:#f1edff;color:#5a3df0;border-radius:11px;padding:4px 10px;font-size:11px;font-weight:700;}
+QLabel#chipTeal {background:#e4f7f5;color:#0b8a7e;border-radius:11px;padding:4px 10px;font-size:11px;font-weight:700;}
+QLabel#chipAmber {background:#fff4dc;color:#a76a00;border-radius:11px;padding:4px 10px;font-size:11px;font-weight:700;}
+QLabel#chipPink {background:#ffe8f0;color:#d02a64;border-radius:11px;padding:4px 10px;font-size:11px;font-weight:700;}
+QLabel#status {background:#f1edff;color:#4a33c9;border-radius:10px;padding:9px 12px;font-weight:600;}
+QPushButton {background:#ffffff;border:1px solid #dedbea;border-radius:10px;padding:9px 14px;color:#15131f;font-weight:600;}
+QPushButton:hover {background:#f6f3ff;border-color:#b9a9ff;color:#4a33c9;}
+QPushButton:pressed {background:#ece6ff;}
+QPushButton:focus {border:1px solid #6d4dff;}
+QPushButton:disabled {color:#b5b2c4;background:#fbfbfd;border-color:#efeef4;}
+QPushButton#primary {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6d4dff,stop:1 #ff4f8b);color:#ffffff;font-family:Sora;font-size:14px;font-weight:700;border:0;border-radius:12px;padding:14px 26px;}
+QPushButton#primary:hover {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #5d3df2,stop:1 #f23f7c);color:#ffffff;}
+QPushButton#primary:pressed {background:#5a3df0;}
+QPushButton#primary:disabled {background:#d9d4f3;color:#ffffff;}
+QPushButton#nav {background:transparent;border:0;border-radius:10px;padding:8px 13px;color:#6b6880;font-weight:600;}
+QPushButton#nav:hover {background:#f4f1ff;color:#4a33c9;}
+QPushButton#nav:checked {background:#efeaff;color:#4a33c9;}
+QListWidget,QTableWidget {background:#ffffff;border:1px solid #ecebf3;border-radius:10px;alternate-background-color:#faf9fd;selection-background-color:#efeaff;selection-color:#2d1f8f;gridline-color:#f1f0f6;}
+QHeaderView::section {background:#faf9fd;color:#6b6880;border:0;border-bottom:1px solid #ecebf3;padding:7px;font-weight:700;}
+QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:#ffffff;border:1px solid #dedbea;border-radius:10px;padding:9px;selection-background-color:#ddd3ff;selection-color:#15131f;}
+QLineEdit:focus,QComboBox:focus,QSpinBox:focus,QDoubleSpinBox:focus {border:1px solid #6d4dff;}
 QComboBox::drop-down {border:0;width:26px;}
 QComboBox::down-arrow {image:url(CHEVRON);width:10px;height:6px;}
-QComboBox QAbstractItemView {background:#ffffff;border:1px solid #dcdce0;selection-background-color:#efeff2;selection-color:#0d0d0f;}
+QComboBox QAbstractItemView {background:#ffffff;border:1px solid #dedbea;selection-background-color:#efeaff;selection-color:#2d1f8f;}
 QCheckBox {background:transparent;padding:4px 0;}
-QProgressBar {border:0;background:#ececef;border-radius:3px;height:4px;}
-QProgressBar::chunk {background:#141416;}
-QSlider::groove:horizontal {height:3px;background:#dedee3;}
-QSlider::handle:horizontal {background:#141416;width:9px;margin:-4px 0;border-radius:4px;}
-QFrame#rail {background:#ffffff;border-right:1px solid #ececef;}
-QPushButton#nav {text-align:left;background:transparent;border:1px solid transparent;padding:11px 12px;color:#5d5d66;}
-QPushButton#nav:hover {background:#f4f4f6;color:#0d0d0f;}
-QPushButton#nav:checked {background:#f0f0f2;border-color:#e3e3e7;color:#0d0d0f;font-weight:600;}
-QPushButton#workflow {font-size:11px;text-align:left;padding:10px;}
-QSplitter::handle {background:#f6f6f7;width:8px;height:8px;}
+QCheckBox::indicator:checked {background:#6d4dff;border:1px solid #6d4dff;border-radius:4px;}
+QProgressBar {border:0;background:#eeebf7;border-radius:3px;height:5px;}
+QProgressBar::chunk {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6d4dff,stop:1 #ff4f8b);border-radius:3px;}
+QSlider::groove:horizontal {height:4px;background:#e8e5f3;border-radius:2px;}
+QSlider::sub-page:horizontal {background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #6d4dff,stop:1 #ff4f8b);border-radius:2px;}
+QSlider::handle:horizontal {background:#ffffff;border:2px solid #6d4dff;width:10px;margin:-5px 0;border-radius:7px;}
+QSplitter::handle {background:#f7f6fb;width:12px;height:12px;}
 QScrollArea {border:0;background:transparent;}
 QScrollBar:vertical {background:transparent;width:8px;margin:0;}
-QScrollBar::handle:vertical {background:#d6d6db;border-radius:4px;min-height:24px;}
+QScrollBar::handle:vertical {background:#d9d5ea;border-radius:4px;min-height:24px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
-QToolTip {background:#111113;color:#ffffff;border:0;padding:6px;}
+QToolTip {background:#15131f;color:#ffffff;border:0;padding:6px;}
 '''
 STYLE = STYLE.replace('CHEVRON', (Path(__file__).parent/'resources'/'chevron.svg').as_posix())
 
 
+
+
+def load_fonts():
+    """Register the bundled OFL fonts (Manrope UI, Sora display); safe to call repeatedly."""
+    from PySide6.QtGui import QFontDatabase
+    for path in sorted((Path(__file__).parent/'resources'/'fonts').glob('*.ttf')):
+        QFontDatabase.addApplicationFont(str(path))
+
+
+def step(number, text):
+    row = QWidget(); row.setObjectName('step'); layout = QHBoxLayout(row)
+    layout.setContentsMargins(0,0,0,0); layout.setSpacing(10)
+    layout.addWidget(label(str(number),'badge')); layout.addWidget(label(text,'section')); layout.addStretch()
+    return row
 
 
 def label(text, kind=None):
@@ -82,11 +111,11 @@ def label(text, kind=None):
     return item
 
 
-def panel():
+def panel(kind='panel'):
     frame = QFrame()
-    frame.setObjectName('panel')
+    frame.setObjectName(kind)
     shadow = QGraphicsDropShadowEffect(frame)
-    shadow.setBlurRadius(28); shadow.setOffset(0,4); shadow.setColor(QColor(16,16,24,18))
+    shadow.setBlurRadius(30); shadow.setOffset(0,6); shadow.setColor(QColor(60,40,140,22))
     frame.setGraphicsEffect(shadow)
     layout = QVBoxLayout(frame)
     layout.setContentsMargins(18,18,18,18)
@@ -122,103 +151,99 @@ class Studio(QMainWindow):
         self.timeline = None
         self.last_output = None
         self.job = None
+        load_fonts()
         root = QWidget()
         self.setCentralWidget(root)
-        outer = QHBoxLayout(root)
-        outer.setContentsMargins(0,0,16,14); outer.setSpacing(16)
-        rail=QFrame(); rail.setObjectName('rail'); rail.setFixedWidth(174)
-        rail_layout=QVBoxLayout(rail); rail_layout.setContentsMargins(18,24,18,20); rail_layout.setSpacing(10)
-        rail_layout.addWidget(label('DRIFT','brand'))
-        rail_layout.addWidget(label('MONTAGE STUDIO','eyebrow'))
-        rail_layout.addSpacing(22)
+        page = QVBoxLayout(root)
+        page.setContentsMargins(0,0,0,0); page.setSpacing(0)
+        bar=QFrame(); bar.setObjectName('appbar'); bar.setFixedHeight(66)
+        bar_layout=QHBoxLayout(bar); bar_layout.setContentsMargins(24,0,24,0); bar_layout.setSpacing(6)
+        bar_layout.addWidget(BrandMark()); bar_layout.addSpacing(6)
+        bar_layout.addWidget(label('DRIFT','brand')); bar_layout.addSpacing(4)
+        bar_layout.addWidget(label('Montage Studio','muted')); bar_layout.addSpacing(30)
         self.nav_buttons={}
         for name,callback in [('Studio',lambda:self.screen.setCurrentIndex(0)),
-                              ('Import',self.import_media),('AI Director',lambda:self.show_advanced(self.ai_model)),
-                              ('Timeline',lambda:self.timeline_table.setFocus()),
+                              ('Import',self.import_media),('AI Director',lambda:self.show_advanced(self.director_mode)),
+                              ('Timeline',lambda:self.body_scroll.ensureWidgetVisible(self.lanes)),
                               ('Effects',lambda:self.show_advanced(self.transition)),
                               ('Audio',self.import_music),
                               ('Export',self.export)]:
             button=QPushButton(name);button.setObjectName('nav')
             self.nav_buttons[name]=button
             if name=='Studio':button.setCheckable(True);button.setChecked(True)
-            if callback:button.clicked.connect(callback)
-            else:button.setEnabled(False);button.setToolTip('Planned — not yet implemented')
-            rail_layout.addWidget(button)
-        rail_layout.addStretch()
-        rail_layout.addWidget(label('PROJECT','eyebrow'))
-        rail_layout.addWidget(label('Local workspace','muted'))
-        rail_layout.addWidget(label('PURPOSE / CRAFT','eyebrow'))
-        outer.addWidget(rail)
-        body=QWidget();body.setMinimumHeight(960)
+            button.clicked.connect(callback)
+            bar_layout.addWidget(button)
+        bar_layout.addStretch()
+        for text,kind in [('Beat-synced','chip'),('Local render','chipTeal')]:
+            bar_layout.addWidget(label(text,kind),0,Qt.AlignVCenter)
+        page.addWidget(bar)
+        body=QWidget();body.setObjectName('canvas')
         self.body_scroll=QScrollArea();self.body_scroll.setWidgetResizable(True)
         self.body_scroll.setFrameShape(QFrame.NoFrame)
         self.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.body_scroll.setWidget(body);outer.addWidget(self.body_scroll,1)
+        self.body_scroll.setWidget(body);page.addWidget(self.body_scroll,1)
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(0,18,0,0)
-        header = QHBoxLayout()
-        header.addWidget(label('Your studio', 'title'))
-        header.addWidget(label('  /  AUTOMATIC EDITING', 'eyebrow'))
-        header.addStretch()
-        header.addWidget(label('LOCAL MEDIA  •  PRIVATE WORKSPACE', 'eyebrow'))
-        layout.addLayout(header)
-        subtitle = label('A considered edit. A stronger story.', 'muted')
-        layout.addWidget(subtitle)
+        layout.setContentsMargins(24,20,24,20); layout.setSpacing(16)
         self.banner=CathedralBanner(); layout.addWidget(self.banner)
-        intake,intake_layout=panel()
-        intake_layout.addWidget(label('01  /  START YOUR EDIT', 'eyebrow'))
-        self.drop_hint=label('Drop your gameplay here. Add a soundtrack. We’ll build the edit.', 'muted')
-        intake_layout.addWidget(self.drop_hint)
-        quick=QHBoxLayout()
-        self.song_name=QLineEdit();self.song_name.setPlaceholderText('Type the song title from your music folder…')
-        self.song_name.textEdited.connect(lambda:self.clear_music_selection())
-        quick.addWidget(self.song_name,1)
-        library=QPushButton('Music folder');library.clicked.connect(self.choose_music_folder);quick.addWidget(library)
-        self.create_button=QPushButton('Create montage');self.create_button.setObjectName('primary')
-        self.create_button.clicked.connect(lambda:self.export(automatic=True));quick.addWidget(self.create_button)
-        advanced=QPushButton('Creative controls');advanced.clicked.connect(self.toggle_advanced);quick.addWidget(advanced)
-        intake_layout.addLayout(quick);layout.addWidget(intake)
-
         workspace = QSplitter(Qt.Horizontal)
-        workspace.setMinimumHeight(520);workspace.setMaximumHeight(570)
+        workspace.setChildrenCollapsible(False)
         self.workspace=workspace
         layout.addWidget(workspace,1)
-        assets,left = panel()
-        left.addWidget(label('01  /  SOURCE LIBRARY','eyebrow'))
-        left.addWidget(label('Your footage','title'))
-        self.footage = QListWidget()
-        left.addWidget(self.footage,1)
+        main=QWidget(); main.setObjectName('canvas'); column=QVBoxLayout(main)
+        column.setContentsMargins(0,0,0,0); column.setSpacing(16)
+        top=QHBoxLayout(); top.setSpacing(16)
+
+        intake,intake_layout=panel('create')
+        intake_layout.addWidget(step(1,'Start your edit'))
+        drop=QFrame(); drop.setObjectName('dropzone'); drop_layout=QVBoxLayout(drop)
+        drop_layout.setContentsMargins(16,14,16,14); drop_layout.setSpacing(8)
+        self.drop_hint=label('Drop gameplay clips here, or import them. Add a song and we’ll build the edit.','muted')
+        self.drop_hint.setWordWrap(True); drop_layout.addWidget(self.drop_hint)
+        self.footage = QListWidget(); self.footage.setMinimumHeight(84); self.footage.setMaximumHeight(120)
+        drop_layout.addWidget(self.footage)
+        clip_row=QHBoxLayout()
         self.import_button = QPushButton('+ Import gameplay')
-        self.import_button.clicked.connect(self.import_media)
-        left.addWidget(self.import_button)
-        remove = QPushButton('Remove selected')
-        remove.clicked.connect(lambda: self.footage.takeItem(self.footage.currentRow()))
-        left.addWidget(remove)
-        self.music_label = label('No music selected','muted')
-        self.music_label.setWordWrap(True)
-        left.addWidget(self.music_label)
-        music = QPushButton('Choose music track')
-        music.clicked.connect(self.import_music)
-        left.addWidget(music)
-        load = QPushButton('Open saved timeline')
-        load.clicked.connect(self.load_timeline)
-        left.addWidget(load)
-        self.assets_panel=assets
-        workspace.addWidget(assets)
-        assets.hide()
-        center = QWidget()
-        column = QVBoxLayout(center)
-        column.setContentsMargins(0,0,0,0)
+        self.import_button.clicked.connect(self.import_media); clip_row.addWidget(self.import_button)
+        remove = QPushButton('Remove')
+        remove.clicked.connect(lambda: self.footage.takeItem(self.footage.currentRow())); clip_row.addWidget(remove)
+        drop_layout.addLayout(clip_row)
+        drop.setMinimumHeight(196); intake_layout.addWidget(drop)
+        intake_layout.addWidget(label('SOUNDTRACK','eyebrow'))
+        song_row=QHBoxLayout()
+        self.song_name=QLineEdit();self.song_name.setPlaceholderText('Type a song title from your music folder…')
+        self.song_name.textEdited.connect(lambda:self.clear_music_selection())
+        song_row.addWidget(self.song_name,1)
+        library=QPushButton('Music folder');library.clicked.connect(self.choose_music_folder);song_row.addWidget(library)
+        intake_layout.addLayout(song_row)
+        self.music_label = label('No music selected','muted'); self.music_label.setWordWrap(True)
+        music_row=QHBoxLayout(); music_row.addWidget(self.music_label,1)
+        music = QPushButton('Choose file'); music.clicked.connect(self.import_music); music_row.addWidget(music)
+        intake_layout.addLayout(music_row)
+        intake_layout.addStretch()
+        chips=QHBoxLayout(); chips.setSpacing(6)
+        for text,kind in [('Beat grid','chip'),('Speed ramps','chipPink'),('Punch-ins','chipAmber'),('Mastered audio','chipTeal')]:
+            chips.addWidget(label(text,kind))
+        chips.addStretch(); intake_layout.addLayout(chips)
+        self.create_button=QPushButton('Create montage');self.create_button.setObjectName('primary')
+        self.create_button.clicked.connect(lambda:self.export(automatic=True))
+        intake_layout.addWidget(self.create_button)
+        secondary=QHBoxLayout()
+        advanced=QPushButton('Creative controls');advanced.clicked.connect(self.toggle_advanced);secondary.addWidget(advanced)
+        load = QPushButton('Open timeline'); load.clicked.connect(self.load_timeline); secondary.addWidget(load)
+        intake_layout.addLayout(secondary)
+        intake.setMinimumWidth(380); intake.setMinimumHeight(intake.sizeHint().height())
+        top.addWidget(intake,5)
+
         preview,view = panel()
-        view.addWidget(label('02  /  PREVIEW','eyebrow'))
-        self.preview_title = label('Your footage, in focus','title')
+        view.addWidget(step(2,'Preview'))
+        self.preview_title = label('Your footage, in focus','muted')
         view.addWidget(self.preview_title)
         self.video = QVideoWidget(); self.video.setStyleSheet("background:#000000;")
         self.video.setMinimumHeight(150)
-        self.screen = QStackedWidget();self.screen.setMinimumHeight(150);self.screen.setMaximumHeight(260)
+        self.screen = QStackedWidget();self.screen.setMinimumHeight(300)
         empty = CinemaCanvas(); empty_layout = QVBoxLayout(empty)
         empty_layout.addStretch(3)
-        message = label('PREVIEW / NO MEDIA LOADED', 'eyebrow')
+        message = label('NO MEDIA LOADED', 'eyebrow')
         message.setAlignment(Qt.AlignCenter); empty_layout.addWidget(message)
         message = label('Every moment has a story.', 'title')
         message.setAlignment(Qt.AlignCenter); empty_layout.addWidget(message)
@@ -244,9 +269,14 @@ class Studio(QMainWindow):
         self.player.positionChanged.connect(lambda t:self.clock.setText(f'{t//60000:02d}:{t//1000%60:02d}'))
         controls.addWidget(self.clock)
         view.addLayout(controls)
-        column.addWidget(preview,3)
+        top.addWidget(preview,7)
+        column.addLayout(top)
+
         timeline,track = panel()
-        track.addWidget(label('03  /  EDIT TIMELINE','eyebrow'))
+        heading=QHBoxLayout(); heading.addWidget(step(3,'Edit timeline'),1)
+        for text,kind in [('Footage','chip'),('Music','chipTeal'),('Dialogue','chipAmber')]:
+            heading.addWidget(label(text,kind))
+        track.addLayout(heading)
         self.timeline_table = QTableWidget(0,4)
         self.timeline_table.setHorizontalHeaderLabels(['Footage','Source in','Length','Activity'])
         self.timeline_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -258,11 +288,17 @@ class Studio(QMainWindow):
         track.addWidget(self.lanes)
         track.addWidget(self.timeline_table)
         self.timeline_table.hide()
-        track.addWidget(label('Populated from a generated or loaded timeline. Manual clip editing is planned.','muted'))
-        column.addWidget(timeline,2)
-        workspace.addWidget(center)
+        track.addWidget(label('Built from the generated or loaded timeline. Manual clip editing is planned.','muted'))
+        column.addWidget(timeline)
+        self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
+        column.addWidget(self.progress)
+        self.status = label('Ready for your footage.','status')
+        self.status.setWordWrap(True); column.addWidget(self.status)
+        column.addStretch()
+        main.setMinimumHeight(main.sizeHint().height())
+        workspace.addWidget(main)
         inspector,right = panel()
-        right.addWidget(label('04  /  SCENE & STORY','eyebrow'))
+        right.addWidget(step(4,'Creative controls'))
         right.addWidget(label('Shape the story.','title'))
         self.analysis_label=label('SCENE ANALYSIS\nImport footage and choose Analyze.\nMotion/audio scores are heuristic; kill detection is planned.','muted')
         self.analysis_label.setWordWrap(True);right.addWidget(self.analysis_label)
@@ -345,13 +381,9 @@ class Studio(QMainWindow):
         right.addWidget(self.open_button)
         inspector.setMinimumHeight(960)
         inspector_scroll=QScrollArea();inspector_scroll.setWidgetResizable(True);inspector_scroll.setWidget(inspector)
-        inspector_scroll.setMinimumWidth(360);workspace.addWidget(inspector_scroll)
+        inspector_scroll.setMinimumWidth(360);inspector_scroll.setMaximumWidth(440);workspace.addWidget(inspector_scroll)
         self.inspector_scroll=inspector_scroll;inspector_scroll.hide()
-        workspace.setSizes([220,1000,400])
-        self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
-        layout.addWidget(self.progress)
-        self.status = label('Ready for your footage.','muted')
-        self.status.setWordWrap(True); layout.addWidget(self.status)
+        workspace.setSizes([1100,400])
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
         self.ai_model.setText(str(self.preferences.value('ai_model','')))
@@ -447,7 +479,7 @@ class Studio(QMainWindow):
             choice,ok=QInputDialog.getItem(self,'Choose music','Use which dropped audio file?',audio,0,False)
             if ok:self.select_music(choice)
         if self.footage.count():
-            self.assets_panel.show();self.footage.setCurrentRow(0)
+            self.footage.setCurrentRow(0)
         self.drop_hint.setText(f'{self.footage.count()} gameplay clips ready. '+('Music selected.' if self.music_path else 'Type your song title.'))
         if ignored:self.status.setText(f'Ignored {ignored} unsupported or missing files.')
 

@@ -37,6 +37,21 @@ class DesktopTests(unittest.TestCase):
             self.assertNotIn('BPM',window.status.text())
         window.close()
 
+    def test_bundled_fonts_and_white_colour_theme_load(self):
+        from PySide6.QtGui import QFontDatabase
+        window=Studio()
+        families=QFontDatabase.families()
+        self.assertIn('Manrope',families); self.assertIn('Sora',families)
+        self.assertIn('background:#ffffff',STYLE.replace(' ',''))
+        self.assertIn('#6d4dff',STYLE)
+        self.assertNotIn('CHEVRON',STYLE)
+        self.assertTrue(Path(STYLE.split('image:url(')[1].split(')')[0]).is_file())
+        window.show(); self.app.processEvents()
+        image=window.grab().toImage()
+        corner=image.pixelColor(image.width()-40,image.height()//2)
+        self.assertGreater(min(corner.red(),corner.green(),corner.blue()),235)
+        window.close()
+
     def test_reference_workspace_and_real_analysis(self):
         window=Studio()
         self.assertFalse(window.banner.art.isNull())

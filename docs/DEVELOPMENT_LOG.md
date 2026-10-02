@@ -124,3 +124,7 @@
 - Added vision_director.py (ClaudeDirector), `ai_editor` in create_montage, `--claude-editor` CLI, desktop Director option with disclosure, `[ai]` extra (anthropic>=1.11). Exclusion of unusable footage is enforced in direct() by pre-reserving spans.
 - Found and fixed while testing: matching reviews by object identity broke on rebuilt lists (now source/time); missing credentials surfaced as a raw SDK TypeError/CredentialsError (now a clear message); SDK import made optional when a client is injected so CI without the extra still runs the tests.
 - Tests: 5 vision tests (real frame extraction, request shape incl. no paths, strict validation, refusal/max_tokens, credentials, real render honouring exclusions). No ANTHROPIC credentials in this container: no live API call made.
+
+## 2026-10-02 — White, colour-accented UI redesign (Claude continuation)
+- User asked for a primarily white UI, then a new font, new structure and more colour. Delivered white monochrome first (6897774), then this redesign: bundled OFL Manrope/Sora, top app bar, Create card with visible clip list and gradient action, side-by-side preview, colour-coded timeline lanes, colour chips and status. Iterated from offscreen screenshots: fixed a caption overlapping the empty state, a missing combo arrow, stretched chips, lane outlines, step headers painting over the card tint and a page clamped below its content height.
+- Desktop checks: 9 OK (new: bundled fonts register, theme is white with accent, chevron path resolves, window edge renders white).
