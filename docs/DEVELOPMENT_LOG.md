@@ -7,3 +7,100 @@
 - Decision: Python + FFmpeg + NumPy; no mandatory GPU/model service. unittest avoids an extra test dependency.
 - Validation: see checkpoint commit; local clean virtual environment tests and doctor executed before commit.
 - Limitations: no editing pipeline or UI yet. Next priority: tested actual end-to-end render.
+
+## 2026-10-01 — First working vertical slice
+- Objective: import → analyze → candidate moments → music onsets → timeline → real MP4 → output validation.
+- Added pipeline and CLI create/render commands, timeline persistence, non-overlap direction, chunked motion/audio analysis, letterboxed CPU rendering and full-decode validation.
+- Added mandatory generated-media integration test, timeline unit tests and detailed status/development/architecture/roadmap documentation.
+- Initial integration exposed premature shortening from overlapping peak windows; director now searches unused intervals around candidate moments. All five tests subsequently passed, including six-second export and timeline replay.
+- Baseline tests: two passed in a fresh venv using system dependencies; this was isolated package installation, not fully isolated dependencies. Further clean-environment verification recorded below.
+- No performance benchmark or real gameplay editorial evaluation performed. Synthetic output only; no GPU/Windows validation.
+- Git shell push had no credentials; publish via connected GitHub API, then verify remote refs. Never claim the original local commit was pushed when API commit SHAs differ.
+- Next priority: real-gameplay quality evaluation and preview/manual control. Desktop UI, semantic AI, GPU execution and installer remain planned.
+- Clean environment: fresh venv without system packages, built/installed project wheel with freshly downloaded NumPy 2.5.3; all five tests passed in 4.158 seconds. FFmpeg remains a separately installed system executable.
+- Foundation GitHub commit: c25a568521a0978b063e788467d14e639cebcb07 (main).
+
+## 2026-10-01 — Christian storytelling controls
+- User goal: studio-quality montages/videos with a deep Christian undertone that inspire following Christ.
+- Implemented optional story JSON import, timed local dialogue cues, source-bound checks, scheduled music ducking, output limiter and black/white clip fades. Persisted cues and provenance metadata with backward-compatible timelines.
+- Added creative direction and explicit separation of original narration, paraphrases and quotations. No supplied reference audio, voice generation, verse verification or automatic theological direction.
+- Tests: mandatory generated-media render expanded to dialogue/fade render, replay serialization, invalid cue bounds and opening black-frame check; normal pipeline tests retained.
+- Remaining: real gameplay/narration quality evaluation, captions, intelligent narrative planning and desktop preview. Studio quality is an aspiration, not validated status.
+- Validation result: all five tests passed in 6.509 seconds; compileall passed.
+
+## 2026-10-01 — Reference research and desktop workspace
+- User requested Kaiser-style editing techniques with Christian flair, then a premium detailed UI.
+- Identified likely @KaiserEdits using primary channel/project-store sources. Project store confirms After Effects; playback unavailable. Provisional skill roadmap written in REFERENCE_STYLE.md; no claimed frame-level study or plugin inventory.
+- Added optional PySide6 desktop entry point with native imports, Qt multimedia preview/playback, actual timeline table, dialogue cue/provenance editing, export settings, background RenderJob, error display and validated output preview.
+- Added separate desktop CI job. Two desktop checks passed offscreen; five core/render tests passed in 13.330 seconds. Screenshot inspected and included in docs. Compile/import integrity checked.
+- Offscreen environment reports unavailable PipeWire/PulseAudio devices; audible playback not validated. Windows remains untested. No cancel/resume, manual clip editing, captions or advanced motion/speed effects yet. Loaded-timeline replay uses stored controls, not inspector edits.
+- Next: obtain accessible local reference clips for precise style breakdown, test desktop with real footage/audio on Windows, then implement measured timing/speed/transition controls.
+
+## 2026-10-01 — Custom depth and CI repair
+- Investigated failed GitHub run 36879866047: core test job passed; desktop import failed because libpulse.so.0 was missing. Added libpulse0 to Linux desktop CI dependencies; retained mandatory multimedia tests.
+- Added code-native cinematic light/cross canvas, concentric depth details, gradient panel surfaces, soft shadows and raised controls. No generated fake footage.
+- Added actual video/music/dialogue timeline lanes with time ruler and export seek. Empty lanes are clearly empty; no fabricated waveform or events. Added module launch support (`python -m montage_editor.desktop`).
+- Offscreen desktop tests pass; refreshed screenshot inspected. Audible playback and Windows remain unvalidated.
+
+## 2026-10-01 — User-supplied DRIFT reference redesign
+- Read uploaded image(5).png directly from scratch. Adopted DRIFT branding, left navigation, cathedral/cross hero, monochrome raised surfaces, five workflow cards, wide preview and scene/story inspector.
+- Generated original cathedral backdrop using built-in image generation with the user's image as style/composition reference, not an edit target. Packaged compressed resource at src/montage_editor/resources/cathedral.jpg; user reference itself is not committed.
+- Implemented separate background Analyze action returning real motion/audio candidates and displaying top activity/time; score explicitly not semantic confidence. Preserved working import/music/dialogue/render workflows. Unimplemented AI Director/Color/Styles navigation disabled.
+- Source library reveals after media import; initial home layout prioritizes the reference composition. Actual timeline lanes remain connected to stored data. Empty preview is clearly empty; no fabricated gameplay/waveforms.
+- Validation: three offscreen desktop checks passed; compileall passed; built wheel and verified packaged cathedral asset; final screenshot inspected. Windows/device playback remain unvalidated. Advanced effect and semantic AI controls from reference still planned.
+
+## 2026-10-01 — Optional Ollama automatic director
+- User requested minimal involvement and local AI-driven editing. Verified current Ollama API documentation.
+- Added loopback structured-JSON director, independent plan validation, prioritized candidates, global pacing and supported transitions. Connected CLI (--ollama-model/--brief) and desktop mode/model/brief controls. Automatic FFmpeg pipeline executes and validates plans; no model-generated commands or asset paths.
+- Records provider/model/plan in analysis sidecar. Missing/invalid Ollama fails explicitly rather than falsely claiming AI operation. Existing heuristic mode and timeline replay retained.
+- Tests: eight core tests passed in 8.153s, including transport mock, invalid-plan rejection and actual MP4 from mocked AI plan. Three desktop checks passed. Ollama binary/service absent, so live inference and model quality remain unvalidated.
+- Added scrolling inspector to preserve readable controls after adding AI settings. Advanced vision, TTS, reference selection, speed ramps and autonomous quality iteration remain planned.
+
+## 2026-10-01 — Drop/song/create simple mode
+- User requested minimal interaction: drop clips, type desired song, automatically create Christian-inspired montages.
+- Added native file drag/drop and duplicate handling, local song filename matching with ambiguity selection, one-time saved music folder/model/brief preferences, hidden advanced controls and one-click quick creation with unique automatic output path in OS Movies/Videos/DRIFT.
+- Added original Christian closing title for quick mode and persisted faith_message in backward-compatible timelines. FFmpeg drawtext uses a literal text file with expansion disabled. No downloaded songs, fabricated scripture or synthesized speech.
+- Validation: ten core tests passed in 8.677 seconds; four desktop checks passed in .325 seconds. Covers local music matching, duplicate drop ingestion, settings persistence, default hidden inspector and real titled render/replay. Screenshot inspected. Previous Ollama integration GitHub CI passed.
+- Limitations: song lookup matches local filenames only; library scan bounded to 10,000 entries. Windows drag/drop/device execution and live Ollama quality remain unvalidated. Artistic equivalence to Kaiser, advanced effects and autonomous quality iteration remain goals.
+
+## 2026-10-01 — Actual sample render and duration regression
+- Produced a 12-second 720p sample through the actual CLI using animated generated cathedral artwork and synthesized music, white fades and a Christian closing title. This demonstrates mechanics, not gameplay/Kaiser-level artistry or live AI inference.
+- Sample inspection exposed video ending at 6 seconds while audio/container lasted 12. Output seeking after input interacted with frame processing. Moved accurate seek before input and now independently require video/audio stream durations to match timeline; container-only validation was insufficient.
+- Regenerated sample has full 12-second video/audio coverage, full decode and verified late title frame. Ten core tests passed in 8.976 seconds with stricter validation. Large sample/media are excluded from Git.
+
+## 2026-10-01 — Cinematic editing and audio checkpoint
+- Objective: address the rejected flash/noise sample with connected editing features, not additional synthetic demonstration promises.
+- Added editing.py output/source mapping and piecewise 1.4×/0.6×/1.4× retiming with pitch-preserving audio. Timeline persists validated activity anchors and mix/effect settings.
+- Music now uses bounded spectral-flux attack detection at 10 ms hops and rejects silent tracks. Director aligns activity peaks inside shots when possible, varies source selection and builds/resolves heuristic activity. It still does not recognize kills or downbeats.
+- Renderer retains gameplay audio, handles silent sources, adds restrained zoom edges, real narration sidechain ducking, measured two-pass loudnorm and limiting. Desktop quick mode connects cinematic settings; Ollama may select zoom with validated schema.
+- Documentation: README, ARCHITECTURE, DECISIONS, EDITING, TESTING and ROADMAP updated to distinguish implemented tools from artistic/semantic goals.
+- Tests: 11 core tests passed in 16.923 seconds, including real render/replay, audible music spectrum/RMS/peak checks, changed video frames, mastering and mixed silent/audio sources. Four desktop checks passed offscreen. Compileall passed; whitespace check corrected. Earlier mastering test exposed suppressed FFmpeg measurement logs; measurement now explicitly enables info logging.
+- No GPU, live Ollama, Windows/device playback or real-gameplay creative benchmarks claimed. Ramps are piecewise, zoom is not optical-flow compositing, narration/reference selection remains manual and Christian story meaning is not autonomously verified.
+- Next priority: real user gameplay/music/narration evaluation; semantic event evidence and phrase-aware timing, then smooth retiming/color/story controls.
+
+## 2026-10-01 — Real-gameplay sample and concat regression
+- User requested a test montage with the new tools. No uploaded gameplay/music was available. Downloaded credited Xonotic gameplay by Drummyfish/Xonotic developers (GPL-3.0-or-later) and the US Marine Band/Sara Sheffield Amazing Grace recording (public domain in the US per source).
+- Prepared source video seconds 20–130 and music seconds 30–58. Automatic cinematic director selected twelve shots for 24 seconds at 720p/30fps, four impact-profile shots, zoom edges, .10 gameplay/.9 music mix, measured mastering and original Christian closing text. No live Ollama or added narration.
+- Initial export attempts failed independent stream-coverage validation; no failed export was published. Added complete-frame cut durations, explicit concat shot durations and more informative validation errors. Retained diagnostics subsequently rendered 720 full video frames and 24-second video/audio streams. Added sixteen fractional-duration-shot regression to mandatory integration coverage. Workspace intermediates also exhibited missing MP4 moov headers despite encoder exit success; native /tmp intermediates passed. Moved seek-dependent FFmpeg output to native temporary storage, then sequentially copy to a destination staging file and hard-link atomically without overwriting. Coverage checks remain mandatory.
+- Validation: eleven expanded core tests passed in 24.574 seconds after native-staging fix. Example CLI help under installed environment, compileall and whitespace checks passed. Output contact sheet inspected, closing title visible. Measured output integrated loudness −16.01 LUFS, true peak −3.11 dBTP. Full decode passed. Prior cinematic checkpoint's GitHub core and desktop CI both passed.
+- Added examples/render_gameplay_test.py and docs/TEST_MONTAGE.md for repeatable recipe, source/license credits and honest artistic scope. Media/render/reproduction archive remain outside normal Git history.
+- Limitations: single-map test footage, no semantic kill selection or live AI model. Hypothetical studio/Kaiser-level quality is not asserted. Next: user footage evaluation, semantic selection and phrase-aware story editing.
+
+## 2026-10-01 — Automatic montage generator quality
+- User requested stronger transitions/music/rendering, then clarified that app-generated quality, not an improved demonstration video, is the objective. Stopped the in-progress evaluation sample and focused on engine/UI integration; no new sample is delivered in this checkpoint.
+- Added transitions.py: actual smooth push, zoom, horizontal blur and dissolve compositing; cinematic mode varies directions/styles. Pair jobs replace cut neighbourhoods with held-edge handles, preserving musical cut centers and duration without a graph that decodes all shots at once. Reports record actual boundaries/effects/handle type.
+- Replaced lossy intermediate H.264/AAC with lossless FFV1/24-bit PCM and a single final delivery encode. Added Draft/High/Master presets (CRF 23/16/12), slow high-quality encode, 320 kbps AAC, Lanczos scaling, BT.709 SDR conversion/tags, source-size/upscale metadata and explicit known-HDR rejection. This is not lossless final delivery, calibrated grading or recovered source detail.
+- Director now tries all genuine candidate anchors before unused-interval fallback, preventing repeated adjacent filler around the first ranked candidate. Added music_sections.py to choose an energetic varying excerpt of the user's selected song; exact offset persists and is used in both attack analysis and rendering/replay. No online song acquisition or phrase/lyric understanding.
+- Desktop quick-create defaults to 1080p/High/cinematic blends/mastered audio/automatic music section; Advanced exposes quality, individual transitions and excerpt toggle. CLI exposes --quality. Ollama schema validates implemented compositing choices.
+- Tests: fourteen mandatory core tests passed in 30.605 seconds; five offscreen desktop checks passed in .302 seconds. Includes real red/blue two-image boundary blending, all five transition modes, cut-clock/duration preservation, an actual two-frequency soundtrack excerpt render, quality validation and quick-create generator wiring. Prior core/duration/audio tests retained. Compileall and whitespace checks passed.
+- Limitations: held-frame transition handles can freeze motion briefly; no optical flow, subject tracking, semantic kills, calibrated color/HDR conversion, musical phrase/lyric recognition or automatic religious narration. Windows/device playback/GPU and live Ollama remain unvalidated. Temporary lossless media require substantially more storage and CPU time.
+- Next priority: real user gameplay/music editorial benchmark and semantic moment/phrase evidence, followed by smooth retiming and narrative/caption generation. Artistic quality cannot be certified by encoding settings alone.
+
+## 2026-10-02 — Refined workspace and Claude handoff
+- Objective: improve the actual UI, make Christian influence subtler and prepare continuation in Claude in the existing repository. Starting branch was clean at 96ef2d6; main still held the foundation and PR #1 contained the working application. Previous GitHub core/desktop CI succeeded.
+- Refined desktop.py and workspace_widgets.py: layered graphite panels, quieter architectural texture, neutral copy, clear preview/intake hierarchy, disabled playback until media exists, scrollable compact-window layout and simplified navigation. Replaced prominent cross imagery with film/viewfinder geometry. Updated docs/ui-preview.png from the actual offscreen desktop and visually inspected home/creative-control layouts.
+- Added persisted Subtle/Christian/Neutral tone selection and editable closing line. Default is Keep the faith.; explicit Christian remains optional. Custom captions survive changes/restart, including an empty optional title. Connected settings to automatic/manual generation without changing render-engine behavior.
+- Added CLAUDE.md and docs/CLAUDE_HANDOFF.md with repository/branch continuity, module map, setup, real test commands, known regressions, truthful implementation status and a kickoff prompt. Updated README, storytelling, assets, roadmap and decisions. No automatic transfer of a Claude account/session is performed.
+- Tests: fourteen mandatory core tests passed in 44.504 seconds with actual FFmpeg renders; six offscreen desktop checks passed in .840 seconds, including quick-create wiring and tone/custom-line persistence. Compileall and git diff --check passed. No additional artistic benchmark this session.
+- Limitations: Windows, GPU, physical device playback and live Ollama remain unvalidated. Semantic gameplay/phrase understanding, smooth ramps, automatic narration and cancellable jobs remain unfinished. The UI refinement does not establish studio-quality montage judgment.
+- Next priority: use real gameplay/music editorial evaluation to add semantic moment and musical phrase evidence, preserving stream-duration, frame-clock, audio/mastering and native-staging regressions described in the handoff.
