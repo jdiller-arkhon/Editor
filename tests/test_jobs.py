@@ -1,4 +1,5 @@
 """Cancellation and progress through the real pipeline."""
+import os
 import subprocess
 import tempfile
 import threading
@@ -22,6 +23,31 @@ class JobTests(unittest.TestCase):
                 jobs.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720', '-t', '600',
                           '-f', 'null', '-'])
         self.assertLess(time.monotonic()-began, 5)
+        # A launcher that starts the real ffmpeg as a child (like Chocolatey/Scoop shims) must
+        # not leave that child running after cancel.
+        import sys
+        marker = Path(tempfile.mkdtemp())/'child.pid'
+        launcher = ("import subprocess,sys;p=subprocess.Popen(['ffmpeg','-v','error','-f','lavfi','-i',"
+                    "'testsrc2=size=1280x720','-t','600','-f','null','-']);open(sys.argv[1],'w').write(str(p.pid));p.wait()")
+        cancel = threading.Event()
+        threading.Timer(1.5, cancel.set).start()
+        began = time.monotonic()
+        with jobs.job(cancel):
+            with self.assertRaises(jobs.Cancelled):
+                jobs.run([sys.executable, '-c', launcher, str(marker)])
+        self.assertLess(time.monotonic()-began, 6)
+        time.sleep(.5)
+        child = int(marker.read_text())
+        if sys.platform == 'win32':
+            alive = str(child) in subprocess.run(['tasklist', '/FI', f'PID eq {child}'], capture_output=True,
+                                                 text=True).stdout
+        else:
+            try:
+                os.kill(child, 0); alive = Path(f'/proc/{child}').exists() and \
+                    'Z' not in Path(f'/proc/{child}/stat').read_text().split()[2]
+            except OSError:
+                alive = False
+        self.assertFalse(alive, 'ffmpeg child of the launcher survived cancel')
         with self.assertRaises(subprocess.CalledProcessError):
             jobs.run(['ffmpeg', '-v', 'error', '-i', '/nonexistent.mp4', '-f', 'null', '-'])
         self.assertEqual(jobs.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'anullsrc', '-t', '0.1',

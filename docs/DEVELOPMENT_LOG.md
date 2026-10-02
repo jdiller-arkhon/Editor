@@ -160,3 +160,7 @@
 ## 2026-10-02 — Benchmark and Windows CI (Claude continuation)
 - benchmark.py + CLI `benchmark`; tests on two real renders (cinematic vs plain) and a validated mocked judge. Fixed: NumPy bool in JSON, missing `python -m montage_editor.cli` entry.
 - Windows CI job added (core tests, desktop checks, PyInstaller build, packaged `--self-check`); the PyInstaller spec was built and self-checked on Linux here (260 MB one-folder app). Windows results come from GitHub Actions.
+
+## 2026-10-02 — Windows CI result and installer deferral
+- Windows CI: 59/60 core tests passed on the first run. The failure was real: cancel killed only Chocolatey's ffmpeg launcher shim while the real ffmpeg child kept running. jobs.run now starts each process in its own group/session and kills the whole tree (taskkill /T on Windows, killpg elsewhere); a launcher test reproduces the bug on Linux (fails without the fix) and passes with it.
+- User asked not to build installers yet: the PyInstaller spec and CI packaging steps were removed (recoverable from history at d8371be). Windows tests and desktop checks remain in CI; `--self-check` stays as a cheap diagnostic.

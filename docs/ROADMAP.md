@@ -21,7 +21,7 @@ exclusion from learned HUD presence; gameplay audio transients; hero placement; 
 smooth ramps, punch-ins, interpolated slow motion, looks, motion blur, follow reframe, swishes;
 opt-in Claude moment review with 6-frame strips and a review-the-cut pass; music from YouTube/Spotify
 links; progress/cancel, presets, preview→final, shot editing; benchmark with optional Claude judge;
-Windows CI and a PyInstaller build.
+Windows CI (tests and desktop checks).
 
 Still open, in priority order:
 1. Live validation: run the Claude editor and judge on the user's real footage and songs, and record
@@ -30,4 +30,4 @@ Still open, in priority order:
    reading per game (not attempted).
 3. Ground-truth beat/downbeat/drop labels for real songs; swing, tempo changes and non-4/4.
 4. Impact sound effects (no CC0 source reachable in-session), calibrated colour/HDR, GPU encoding.
-5. Windows installer/signing on top of the CI-built one-folder app; FFmpeg bundling decision.
+5. Windows installer/signing (deferred by the user; a PyInstaller spec existed at d8371be); FFmpeg bundling decision.
