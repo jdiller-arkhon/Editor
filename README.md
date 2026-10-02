@@ -9,6 +9,7 @@ Continue this project in Claude using [CLAUDE.md](CLAUDE.md) and the detailed [h
 | Status | Features |
 | --- | --- |
 | IMPLEMENTED | CLI media import/probing, generic motion/audio activity scoring, non-overlapping clip selection, JSON timeline save/load/replay, lossless intermediate processing and single-delivery-encode H.264/AAC rendering, letterboxing, audio fades, gameplay mixing, measured two-pass loudness normalization, narration sidechain ducking, restrained zoom transitions, piecewise speed ramps, output validation, configuration, hardware/FFmpeg discovery, integration tests |
+| EXPERIMENTAL | Opt-in Claude vision editor (`--claude-editor`): Claude reviews sampled frames of candidate moments, scores highlights, flags menus/loading screens and suggests story order; local engine keeps all timing. Mock-tested only; live quality unvalidated |
 | EXPERIMENTAL | Measured beat grid (tempo, beats, 4/4 downbeat phase, four-bar/energy-change phrase marks, confidence) driving beat-aligned cuts, with spectral-flux attack pacing as the fallback; activity-based pacing/peak alignment. These are signal heuristics, not semantic game or song-structure understanding |
 | PLANNED | Advanced desktop editing, semantic kills/events, game adapters, learned AI director, reference-style analysis, optical-flow transitions, smooth velocity curves, semantic sound design, GPU render validation, Windows installer |
 

@@ -273,12 +273,20 @@ def _beat_segments(music, settings, duration, cinematic):
 def direct(candidates, music, music_path, settings, duration, ordered=False, cinematic=False):
     if not candidates:
         raise ValueError('No candidate moments')
+    # Footage a reviewer marked unusable (menus, loading screens) is reserved up front so
+    # neither anchored shots nor fallback fills can cover it.
+    excluded = [c for c in candidates if c.get('exclude')]
+    candidates = [c for c in candidates if not c.get('exclude')]
+    if not candidates:
+        raise ValueError('No usable candidate moments')
     ranked = candidates if ordered else sorted(candidates, key=lambda c: (-c['score'], c['source'], c['time']))
     planner = _beat_segments if rhythm_usable(music) else _attack_segments
     # Recorded in the analysis sidecar: the pacing actually used for this timeline.
     music['cut_mode'] = 'beats' if planner is _beat_segments else 'attacks'
     clips = []
-    used = {c['source']: [] for c in ranked}
+    used = {c['source']: [] for c in ranked+excluded}
+    for c in excluded:
+        used[c['source']].append((max(0.0, c['time']-1), min(c['source_duration'], c['time']+1)))
     for length,profile,target,desired,accents in planner(music, settings, duration, cinematic):
         offset=source_offset(target,length,profile)
         choice = None
@@ -287,7 +295,8 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
             # Build toward stronger activity, then give the closing message room.
             last_source = clips[-1].source if clips else None
             shot_pool = sorted(ranked,key=lambda c:(c['source']==last_source,
-                                                    abs(c['score']-desired),c['source'],c['time']))
+                                                    abs(c['score']-desired),c.get('story_rank',1e9),
+                                                    c['source'],c['time']))
         # Try every genuine candidate before filling an interval beside an old one.
         for fallback in (False, True):
             for candidate in shot_pool:
@@ -519,7 +528,7 @@ def render(timeline, output):
     return report
 
 
-def create_montage(gameplay, music, output, settings, story=None, ai_model=None, brief=None):
+def create_montage(gameplay, music, output, settings, story=None, ai_model=None, brief=None, ai_editor=None):
     output = Path(output).resolve()
     sidecars = [output.with_suffix('.timeline.json'), output.with_suffix('.analysis.json'),
                 output.with_suffix('.validation.json')]
@@ -549,6 +558,10 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         LOG.info('Analyzing %s', source['path'])
         candidates.extend(analyze_gameplay(source, settings))
     ai_plan = None
+    vision = None
+    if ai_editor is not None:
+        LOG.info('Requesting Claude vision review of candidate moments')
+        candidates, vision = ai_editor.review(candidates, brief or '')
     if ai_model:
         from .ai_director import OllamaDirector, configure_plan, DEFAULT_BRIEF
         LOG.info('Requesting local Ollama director plan')
@@ -570,8 +583,11 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
     report = render(timeline, output)
     timeline.save(sidecars[0])
-    sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan}, indent=2))
-    report['ai_director'] = 'ollama' if ai_model else 'heuristic'
+    sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan,
+                                       'ai_editor': vision}, indent=2))
+    report['ai_director'] = 'ollama' if ai_model else ('claude vision' if vision else 'heuristic')
+    if vision:
+        report['ai_editor'] = {k: vision[k] for k in ('model','reviewed','usable','events') if k in vision}
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
     report['music_alignment'] = alignment_report(timeline, analysis)

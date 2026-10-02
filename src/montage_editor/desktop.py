@@ -275,8 +275,15 @@ class Studio(QMainWindow):
         form.setRowWrapPolicy(QFormLayout.WrapAllRows)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.director_mode=QComboBox()
-        self.director_mode.addItems(['Automatic • activity engine','Automatic • Ollama (experimental)'])
+        self.director_mode.addItems(['Automatic • activity engine','Automatic • Ollama (experimental)',
+                                     'Automatic • Claude vision editor'])
         form.addRow('Director',self.director_mode)
+        self.director_note=QLabel('Claude reviews sampled frames of your footage to pick highlights. '
+                                  'Frames are sent to Anthropic; needs ANTHROPIC_API_KEY or ant auth login.')
+        self.director_note.setWordWrap(True)
+        self.director_note.setVisible(False)
+        self.director_mode.currentIndexChanged.connect(lambda i:self.director_note.setVisible(i==2))
+        form.addRow(self.director_note)
         self.ai_model=QLineEdit();self.ai_model.setPlaceholderText('Installed Ollama model name')
         self.ai_model.setEnabled(False)
         self.director_mode.currentIndexChanged.connect(lambda i:self.ai_model.setEnabled(i==1))
@@ -341,7 +348,7 @@ class Studio(QMainWindow):
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
         self.ai_model.setText(str(self.preferences.value('ai_model','')))
         saved_mode=int(self.preferences.value('director_mode',0))
-        self.director_mode.setCurrentIndex(saved_mode if saved_mode in (0,1) else 0)
+        self.director_mode.setCurrentIndex(saved_mode if saved_mode in (0,1,2) else 0)
         self.ai_brief.setText(str(self.preferences.value('brief','')))
         self.ai_model.editingFinished.connect(self.save_preferences)
         self.director_mode.currentIndexChanged.connect(self.save_preferences)
@@ -546,7 +553,11 @@ class Studio(QMainWindow):
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
                 if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
-                operation=lambda:create_montage(sources,song,path,settings,story,model,brief)
+                editor=None
+                if self.director_mode.currentIndex()==2:
+                    from .vision_director import ClaudeDirector
+                    editor=ClaudeDirector()
+                operation=lambda:create_montage(sources,song,path,settings,story,model,brief,ai_editor=editor)
         except Exception as error:
             QMessageBox.warning(self,'Check story settings',str(error)); return
         self.create_button.setEnabled(False);self.create_button.setText('Creating your montage…')

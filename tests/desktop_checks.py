@@ -85,6 +85,27 @@ class DesktopTests(unittest.TestCase):
         window.job=None
         window.close()
 
+    def test_claude_editor_mode_is_explicit_and_reaches_generator(self):
+        from montage_editor.vision_director import ClaudeDirector
+        window=Studio()
+        window.director_mode.setCurrentIndex(0)
+        self.assertTrue(window.director_note.isHidden())
+        window.director_mode.setCurrentIndex(2)
+        self.assertFalse(window.director_note.isHidden())
+        self.assertIn('sent to Anthropic',window.director_note.text())
+        self.assertFalse(window.ai_model.isEnabled())
+        window.footage.addItem('clip.mp4');window.music_path='song.wav'
+        with patch.object(window,'resolve_song',return_value=True), \
+             patch('montage_editor.desktop.RenderJob') as job, \
+             patch('montage_editor.desktop.create_montage') as create:
+            window.export(automatic=True)
+            job.call_args.args[0]()
+            self.assertIsInstance(create.call_args.kwargs['ai_editor'],ClaudeDirector)
+            self.assertIsNone(create.call_args.args[5])
+        window.job=None
+        window.director_mode.setCurrentIndex(0)
+        window.close()
+
     def test_story_tone_is_subtle_by_default_and_custom_line_survives_reload(self):
         with tempfile.TemporaryDirectory() as d:
             prefs=QSettings(str(Path(d)/'tone.ini'),QSettings.IniFormat)

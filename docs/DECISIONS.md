@@ -58,3 +58,12 @@ accents reserved for musical events. In cinematic beat mode the director now cho
 per shot from measured phrase marks and energy rather than applying one effect to every boundary.
 Smooth ramps replace stepped ones for new edits; the stepped profile stays valid for replay. These
 choices are rules derived from the measured music, not a study of any specific creator's work.
+
+## 2026-10-02 — Claude judges moments, the local engine keeps the clock
+
+The user asked for a top-end AI editor. Heuristic activity cannot tell a kill from a menu. Claude now
+reviews frames and judges what happened; it never supplies timestamps beyond choosing among three
+fixed frames, commands, paths or effects, so musical sync, frame-clock and non-reuse guarantees remain
+local and testable. Cloud review is opt-in and disclosed because it sends footage frames off-machine;
+the local activity engine remains the default. Default model is claude-opus-5-5 with server-side
+fallback on refusal.

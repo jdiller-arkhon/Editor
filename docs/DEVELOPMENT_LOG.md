@@ -119,3 +119,8 @@
 - Added smooth `ramp` speed profile (editing.py), `Clip.accents` beat punch-ins and `Timeline.boundary_transitions` per-cut hard cut/blend choice (transitions.py compose `per_cut`). Excerpts inherit the whole-song grid/energy scale; the first version re-analysed the excerpt alone, lost its first downbeat and mis-numbered bars, and the end-to-end test passed vacuously with no effect applied until fixed.
 - Measured: rendered ramp frames follow the planned source clock within 60 ms (luma-encoded clock), unramped would be 0.25+ s off; punch frames differ strongly on the accent and return to the plain render after it; a 'cut' boundary has no blended frame while the next 'smoothleft' frame shows both shots.
 - Tests: 24 core tests OK (51.5 s), 7 desktop checks OK.
+
+## 2026-10-02 — Claude vision editor (Claude continuation)
+- Added vision_director.py (ClaudeDirector), `ai_editor` in create_montage, `--claude-editor` CLI, desktop Director option with disclosure, `[ai]` extra (anthropic>=1.11). Exclusion of unusable footage is enforced in direct() by pre-reserving spans.
+- Found and fixed while testing: matching reviews by object identity broke on rebuilt lists (now source/time); missing credentials surfaced as a raw SDK TypeError/CredentialsError (now a clear message); SDK import made optional when a client is injected so CI without the extra still runs the tests.
+- Tests: 5 vision tests (real frame extraction, request shape incl. no paths, strict validation, refusal/max_tokens, credentials, real render honouring exclusions). No ANTHROPIC credentials in this container: no live API call made.

@@ -49,3 +49,28 @@ energetic excerpt of the selected local song. Excerpt selection measures energy/
 not lyrics or phrases. The recorded music_start offset is used consistently in analysis,
 rendering and replay. Advanced can disable automatic excerpt selection. Local-model ranking
 continues to take precedence; its transition choice still must pass the implemented allowlist.
+
+
+## Claude vision editor (opt-in, implemented; live quality unvalidated)
+
+`vision_director.py` adds an AI editor that actually looks at the footage. The local engine still
+finds activity candidates and owns every timing decision (beat grid, ramps, rendering). Up to 24
+candidates, interleaved across sources, are sent to Claude (`claude-opus-5-5`, adaptive thinking,
+effort `high`, server-side `fallbacks: "default"`) as three 512-px JPEG frames each (0.6 s before,
+at, and after the activity peak) plus anonymous source IDs and timestamps. File names and paths are
+never sent. Claude returns schema-constrained JSON: highlight 0-10, event type (elimination, clutch,
+objective, movement, menu_or_loading, ...), usable flag, which frame is the peak, a short note and a
+preferred story order. Every field is validated; invented IDs, out-of-range scores, unknown events or
+duplicates reject the whole review before rendering.
+
+Effect on the edit: reviewed moments are re-scored by Claude's highlight and re-anchored to its peak
+frame; unreviewed candidates keep 30% of their activity score; unusable footage (menus, loading,
+scoreboards) is reserved so neither anchored shots nor fallback fills can cover ±1 s around it. The
+cinematic director's energy matching then puts the strongest judged moments on the loudest music,
+with Claude's story order as a tie-break. Reports record events, usable count and token usage.
+
+Enable with `montage-editor create ... --claude-editor` or Director → "Automatic • Claude vision editor"
+(the UI states that frames are sent to Anthropic). Requires `pip install -e '.[ai]'` and
+`ANTHROPIC_API_KEY` or `ant auth login`. Roughly 72 images ≈ 15-20k input tokens per montage.
+Tests use a mocked transport with real frame extraction and real renders; no live Claude review has
+been run in this repository, so judgement quality on real gameplay is not yet measured.
