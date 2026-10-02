@@ -70,3 +70,64 @@ class HandleTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def mono(path, rate=48000):
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-vn', '-ac', '1', '-ar', str(rate), '-f', 'f32le',
+                          'pipe:1'], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, '<f4')
+
+
+def band(samples, freq, rate=48000):
+    spectrum = np.abs(np.fft.rfft(samples*np.hanning(len(samples))))
+    bin_ = int(round(freq*len(samples)/rate))
+    return float(spectrum[bin_-2:bin_+3].max())
+
+
+class AudioPolishTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.game = self.root/'game.mp4'
+        # Loud 1 kHz "gameplay" tone so a mid-cycle splice would click.
+        ffmpeg('-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-f', 'lavfi', '-i', 'sine=f=1000:sample_rate=48000',
+               '-t', '10', '-af', 'volume=0.8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le',
+               '-f', 'matroska', str(self.game.with_suffix('.mkv')))
+        self.game = self.game.with_suffix('.mkv')
+        self.music = self.root/'music.wav'
+        ffmpeg('-f', 'lavfi', '-i', 'sine=f=220:sample_rate=48000', '-t', '8', '-af', 'volume=0.3', str(self.music))
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_hard_cuts_do_not_click(self):
+        settings = Settings(width=160, height=90, fps=30, quality='draft')
+        quiet, peak = self.root/'quiet.mkv', self.root/'peak.mkv'
+        ffmpeg('-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=mono',
+               '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'pcm_s16le', str(quiet))
+        # A 50 Hz tone that starts at its positive peak: cutting into it from silence is a step.
+        ffmpeg('-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-f', 'lavfi', '-i',
+               "aevalsrc='0.8*cos(2*PI*50*t)':s=48000", '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+               '-c:a', 'pcm_s16le', str(peak))
+        timeline = Timeline(1, str(self.music), settings.__dict__, [Clip(str(quiet), 0, 2, 1), Clip(str(peak), 0, 2, 1)],
+                            gameplay_gain=1, music_gain=0)
+        render(timeline, self.root/'cuts.mp4')
+        audio = mono(self.root/'cuts.mp4')
+        around = np.abs(np.diff(audio[96000-960:96000+960])).max()
+        steady = np.abs(np.diff(audio[120000:140000])).max()   # the tone's own slope
+        self.assertGreater(np.abs(audio[96000+960:96000+2400]).max(), .5)   # the tone really is there
+        self.assertLess(around, max(steady*3, .02))
+
+    def test_highlight_sound_punches_through_the_music(self):
+        settings = Settings(width=160, height=90, fps=30, quality='draft')
+        clips = [Clip(str(self.game), 0, 2, .2), Clip(str(self.game), 4, 2, 1.0, anchor_source=5.0, anchor_output=1.0),
+                 Clip(str(self.game), 7, 2, .2)]
+        base = Timeline(1, str(self.music), settings.__dict__, clips, gameplay_gain=.25, music_gain=.8)
+        flat, punched = self.root/'flat.mp4', self.root/'punched.mp4'
+        render(base, flat)
+        render(replace(base, punch_through=True), punched)
+        a, b = mono(flat), mono(punched)
+        at, calm = slice(int(2.9*48000), int(3.1*48000)), slice(int(.9*48000), int(1.1*48000))
+        self.assertGreater(band(b[at], 1000), band(a[at], 1000)*2.5)    # gameplay swells at the moment
+        self.assertLess(band(b[at], 220), band(a[at], 220)*.8)          # music dips under it
+        self.assertAlmostEqual(band(b[calm], 1000)/band(a[calm], 1000), 1, delta=.1)   # elsewhere unchanged

@@ -167,3 +167,6 @@
 
 ## 2026-10-02 — Real transition handles (Claude continuation)
 - Blends previously froze the edge frames; now render_handles() renders unused adjacent footage and compose() builds blends from it. Test compares two renders with identical shots where one forbids the handle: the outgoing shot keeps moving through the dissolve only with handles. First measurement attempts were confounded (soft wipe mixing; non-comparable source times) and were redone. 62 core tests OK.
+
+## 2026-10-02 — Audio polish (Claude continuation)
+- Edge micro-fades and highlight punch-through. The first click test could not fail (the test tone was continuous across the cut); replaced by a guaranteed silence→peak step that fails without fades. 64 core, 13 desktop OK.

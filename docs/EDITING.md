@@ -158,3 +158,13 @@ holding the edge frame. A handle is only taken when that source footage is insid
 used by any other shot, so nothing repeats on screen; otherwise the edge frame is held as before.
 Each boundary reports `handles`: `source footage`, `mixed source/held` or `held edge frames`. Shot
 timing and total duration are unchanged. Not used with the follow reframe (its crop path is per shot).
+
+
+### Audio polish (implemented)
+
+- Every shot's audio gets 6 ms fade-in/out, so hard cuts never splice a waveform mid-cycle (tested:
+  cutting from silence into a tone at its peak was a 0.8 step without fades, smooth with them).
+- `punch_through` (quick-create default): at the strongest anchored moments (top third by score, up to
+  eight) gameplay audio swells toward 0.9 and the music dips by up to 35% on 0.14 s Gaussian
+  envelopes, so the highlight's own shot/explosion lands. Measured on a render: the gameplay band at
+  the moment rose >2.5×, the music band fell >20%, elsewhere unchanged. Saved projects default off.

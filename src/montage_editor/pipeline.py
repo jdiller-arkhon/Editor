@@ -217,6 +217,7 @@ class Timeline:
     motion_blur: bool = False
     reframe: str = 'fit'
     sfx: str = 'none'
+    punch_through: bool = False
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -232,6 +233,8 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
+        if not isinstance(self.punch_through, bool):
+            raise ValueError('punch_through must be true or false')
         if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
                 not isinstance(self.motion_blur, bool) or self.reframe not in craft.REFRAME or
                 self.sfx not in craft.SFX):
@@ -548,6 +551,19 @@ def accent_filter(accents, settings):
             f"d=1:s={settings.width}x{settings.height}:fps={fps}")
 
 
+def punch_moments(timeline, top=.34):
+    """Output times of the strongest anchored moments (top third by score, at most 8)."""
+    anchored, position = [], 0.0
+    for clip in timeline.clips:
+        if clip.anchor_output is not None and clip.score > 0:
+            anchored.append((clip.score, position+clip.anchor_output))
+        position += clip.duration
+    if not anchored:
+        return []
+    threshold = float(np.quantile([score for score, _ in anchored], 1-top))
+    return sorted(t for score, t in anchored if score >= threshold)[:8]
+
+
 def render_handles(timeline, settings, temporary):
     """Unused source footage just before/after each shot, rendered like the shot itself.
 
@@ -670,7 +686,10 @@ def render(timeline, output):
                 video_filter+=accent_filter(clip.accents,settings)
             graph.append('[vret]'+video_filter+transition_filter+title_filter+'[vout]')
             if has_audio:
-                graph.append(f'[aret]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration={clip.duration}[aout]')
+                # 6 ms edge fades: hard cuts never splice the waveform mid-cycle (no clicks).
+                edge=min(.006,clip.duration/4)
+                graph.append(f'[aret]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration={clip.duration},'
+                             f'afade=t=in:d={edge},afade=t=out:st={clip.duration-edge}:d={edge}[aout]')
             else:
                 graph.append(f'anullsrc=r=48000:cl=stereo,atrim=duration={clip.duration}[aout]')
             run(['ffmpeg','-v','error','-ss',str(clip.start),'-i',clip.source,
@@ -696,6 +715,14 @@ def render(timeline, output):
         filters = [f'[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,'
                    f'afade=t=in:d={fade},afade=t=out:st={duration-fade}:d={fade},volume={timeline.music_gain}[music]']
         filters.append(f'[0:a]volume={timeline.gameplay_gain}[game]')
+        moments = punch_moments(timeline) if timeline.punch_through else []
+        if moments:
+            # Let the highlight's own sound land: gameplay swells and the music dips briefly,
+            # on smooth Gaussian envelopes centred on each anchored moment.
+            bump = '+'.join(f'exp(-pow((t-{m:.3f})/0.14,2))' for m in moments)
+            filters[-2] = filters[-2].replace('[music]', f",volume='1-0.35*min(1,{bump})':eval=frame[music]")
+            filters[-1] = (f"[0:a]volume='{timeline.gameplay_gain}+{max(0.0, .9-timeline.gameplay_gain):.3f}*min(1,{bump})'"
+                           f":eval=frame[game]")
         labels = ['[music]','[game]']
         voices = []
         for i,cue in enumerate(timeline.dialogue):
@@ -841,6 +868,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            music_gain=story.get('music_gain',1),normalize_audio=story.get('normalize_audio',False),
                            interpolation=story.get('interpolation','none'),look=story.get('look','none'),
                            motion_blur=bool(story.get('motion_blur',False)),sfx=story.get('sfx','none'),
+                           punch_through=bool(story.get('punch_through',False)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):
