@@ -20,3 +20,15 @@ at a boundary and that original cut time/duration remain unchanged. A two-freque
 verifies that automatic excerpt selection and actual rendered audio use the same offset.
 The desktop quick-create test verifies real generator arguments (1080p, high quality, cinematic
 transitions, mastering and automatic song-section selection), preventing disconnected controls.
+
+
+## Benchmark (`montage-editor benchmark OUT.mp4 [OUT2.mp4 ...] [--judge] [--report results.json]`)
+
+Scores rendered montages from their sidecars and the delivered file: sync (cuts on beats/downbeats,
+phrase boundaries cut), variety (sources, visual change between neighbouring shots, spread across
+each source), integrity (seconds built on non-gameplay spans, full decode), highlights (share of the
+strongest analysed moments used, used vs available score, strongest shot on intense music), craft
+(ramps, punch-ins, blends vs hard cuts, finishing) and delivery (integrated LUFS, peak). `--judge`
+adds a strict Claude rubric grade (moments, variety, pacing, story, overall) from a contact sheet of
+the finished edit. Use it to compare settings or versions on the same footage and song; the numbers
+expose trade-offs and regressions, they do not certify quality.

@@ -31,6 +31,10 @@ def main():
     add.add_argument('--folder', required=True, help='Your music folder')
     add.add_argument('--local-only', action='store_true',
                      help='For Spotify links, only use a matching song already in the folder')
+    bench = commands.add_parser('benchmark', help='Score rendered montages (reads their sidecars)')
+    bench.add_argument('outputs', nargs='+')
+    bench.add_argument('--judge', action='store_true', help='Add a Claude rubric grade (sends a contact sheet)')
+    bench.add_argument('--report', help='Write the full JSON results here')
     replay = commands.add_parser('render', help='Render a saved timeline')
     replay.add_argument('timeline')
     replay.add_argument('--output', required=True)
@@ -43,6 +47,22 @@ def main():
             from .music_sources import NOTICE, add_music
             logging.info(NOTICE)
             result = add_music(args.link, args.folder, allow_youtube_match=not args.local_only)
+        elif args.command == 'benchmark':
+            from .benchmark import compare, judge, score
+            results = []
+            director = None
+            if args.judge:
+                from .vision_director import ClaudeDirector
+                director = ClaudeDirector()
+            for output in args.outputs:
+                metrics = score(output)
+                if director:
+                    metrics['judge'] = judge(output, metrics, director)
+                results.append(metrics)
+            if args.report:
+                from pathlib import Path
+                Path(args.report).write_text(json.dumps(results, indent=2), encoding='utf-8')
+            result = compare(results)
         elif args.command == 'render':
             result = render(Timeline.load(args.timeline), args.output)
         else:
@@ -61,3 +81,7 @@ def main():
     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:
         detail = error.stderr.decode(errors='replace') if isinstance(error, subprocess.CalledProcessError) else str(error)
         parser.exit(1, f'Error: {detail}\n')
+
+
+if __name__ == '__main__':
+    main()

@@ -156,3 +156,7 @@
 - Timeline editing: move a shot earlier/later (footage exchanged, slot timing kept) and swap a shot with an unused analysed moment; both reject footage reuse/non-gameplay spans.
 - Found and fixed: finalising opened a song-lookup dialog (hung the offscreen test); gameplay-audio transients were self-normalised so steady noise scored as gunshots (now median-relative; the test passed earlier only by chance with a random noise seed).
 - Tests: 57 core, 13 desktop OK.
+
+## 2026-10-02 — Benchmark and Windows CI (Claude continuation)
+- benchmark.py + CLI `benchmark`; tests on two real renders (cinematic vs plain) and a validated mocked judge. Fixed: NumPy bool in JSON, missing `python -m montage_editor.cli` entry.
+- Windows CI job added (core tests, desktop checks, PyInstaller build, packaged `--self-check`); the PyInstaller spec was built and self-checked on Linux here (260 MB one-folder app). Windows results come from GitHub Actions.
