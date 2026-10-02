@@ -139,3 +139,6 @@
 - Hand-labelled 270 frames (2 s spacing) from two stretches of a CC BY-SA Xonotic duel. Rejected a first static-text detector (caught 1/3 training deaths). HUD-presence detector: training 3/3 death spans, 0 false; held-out all death/scoreboard spans incl. two my labels missed, 3 respawn false spans at threshold 0.5, 0 at 0.35 (post-hoc). Shipped implementation (keyframe mask, 4 fps) reproduced this on both clips; 9 min analysed in 45 s CPU.
 - Found while testing: candidates on the fading edge of an excluded span kept a non-zero score (now dropped); the director could leave the single best moment unused when many similar clips matched the music better, or when it sat at a source edge (fixed: hero placement; contained edge placement). Hero test mutation-checked.
 - Tests: 40 core OK, 10 desktop OK. Kill-feed/hit-marker reading is not implemented: it needs per-game screen regions/OCR and was not attempted generically.
+
+## 2026-10-02 — Claude strips and cut review (Claude continuation)
+- Moment review now sends one numbered 6-frame strip per candidate; new review-the-cut pass with validated swaps (closing shot included). Tests: request shape (4 strips, 768×288), peak_frame validation, swap validation limits, swap rules (reuse, non-gameplay), applied swaps land inside their shots with total duration preserved, failed review keeps the cut. 42 core tests OK.

@@ -383,6 +383,44 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
     return timeline
 
 
+def swap_shots(timeline, swaps, excluded=()):
+    """Replace shots' footage with alternate moments, keeping each shot's musical timing.
+
+    ``swaps`` is [(shot index, candidate)]. A swap is rejected (and reported) when the moment
+    cannot sit inside the shot, the source is too short, or it would reuse footage or cover
+    an excluded span. Returns (timeline, applied, rejected).
+    """
+    clips = list(timeline.clips)
+    applied, rejected = [], []
+    blocked = [(c['source'], *(c.get('span') or (c['time']-1, c['time']+1))) for c in excluded]
+    for index, candidate in swaps:
+        clip = clips[index]
+        target = clip.anchor_output if clip.anchor_output is not None else clip.duration/2
+        offset = source_offset(target, clip.duration, clip.speed_profile)
+        start = min(max(0.0, candidate['time']-offset), candidate['source_duration']-clip.duration)
+        reason = None
+        if start < 0 or candidate['source_duration']+1e-6 < clip.duration:
+            reason = 'source too short for this shot'
+        elif not start+.1*clip.duration <= candidate['time'] <= start+.9*clip.duration:
+            reason = 'moment would fall outside the shot'
+        elif any(o.source == candidate['source'] and start < o.start+o.duration-1e-6 and
+                 o.start < start+clip.duration-1e-6 for j, o in enumerate(clips) if j != index):
+            reason = 'would reuse footage already in the cut'
+        elif any(src == candidate['source'] and start < b2 and a2 < start+clip.duration
+                 for src, a2, b2 in blocked):
+            reason = 'covers a non-gameplay span'
+        if reason:
+            rejected.append(dict(shot=index+1, reason=reason)); continue
+        anchored = abs(start+offset-candidate['time']) <= 1e-5
+        clips[index] = Clip(candidate['source'], start, clip.duration, candidate['score'], clip.speed_profile,
+                            candidate['time'] if anchored else None, target if anchored else None,
+                            list(clip.accents))
+        applied.append(dict(shot=index+1, source_time=round(candidate['time'], 3)))
+    result = replace(timeline, clips=clips)
+    result.validate()
+    return result, applied, rejected
+
+
 def validate_output(path, settings, expected_duration):
     media = probe(path)
     videos = [s for s in media['streams'] if s['codec_type'] == 'video']
@@ -622,6 +660,13 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                    'evidence':'motion/audio metadata only; no visual semantic analysis'}
     timeline = direct(candidates, analysis, song['path'], settings, duration, ordered=bool(ai_model),cinematic=bool(story and story.get('edit_profile')=='cinematic'))
     timeline = replace(timeline,music_start=music_start)
+    if vision is not None and hasattr(ai_editor, 'review_cut'):
+        LOG.info('Requesting Claude review of the planned cut')
+        try:
+            timeline, vision['cut_review'] = ai_editor.review_cut(timeline, candidates, analysis, brief or '')
+        except ValueError as error:
+            # The first-pass plan is already valid; a failed review keeps it and says why.
+            vision['cut_review'] = {'error': str(error)}
     if ai_plan:
         timeline = replace(timeline,transition=plan['transition'],transition_duration=plan['transition_duration'])
     if story is not None:

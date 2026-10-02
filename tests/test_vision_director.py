@@ -13,21 +13,27 @@ from types import SimpleNamespace
 
 from montage_editor.config import Settings
 from montage_editor.pipeline import Timeline, create_montage
-from montage_editor.vision_director import (FALLBACK_BETA, MODEL, ClaudeDirector, apply_review,
-                                            review_pool, validate_review)
+from montage_editor.pipeline import Clip, swap_shots
+from montage_editor.vision_director import (FALLBACK_BETA, MODEL, REVIEW_SYSTEM, ClaudeDirector, apply_review,
+                                            review_pool, validate_review, validate_swaps)
 from test_rhythm import write_song
 
 
 class FakeClient:
-    def __init__(self, judge, stop_reason='end_turn'):
+    def __init__(self, judge, stop_reason='end_turn', cut=None):
         self.judge, self.stop_reason, self.calls = judge, stop_reason, []
+        self.cut = cut or (lambda text: dict(swaps=[], notes='Cut is strong.'))
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        ids = [int(b['text'].split()[1].rstrip(':')) for b in kwargs['messages'][0]['content']
-               if b['type'] == 'text' and b['text'].startswith('Candidate ')]
-        text = json.dumps(self.judge(ids))
+        blocks = kwargs['messages'][0]['content']
+        if kwargs['system'] == REVIEW_SYSTEM:
+            text = json.dumps(self.cut(blocks[0]['text']))
+        else:
+            ids = [int(b['text'].split()[1].rstrip(':')) for b in blocks
+                   if b['type'] == 'text' and b['text'].startswith('Candidate ')]
+            text = json.dumps(self.judge(ids))
         return SimpleNamespace(stop_reason=self.stop_reason, model=kwargs['model'],
                                content=[SimpleNamespace(type='thinking', thinking=''),
                                         SimpleNamespace(type='text', text=text)],
@@ -38,13 +44,13 @@ def judge(ids):
     moments = []
     for i in ids:
         if i == 0:
-            moments.append(dict(id=i, highlight=1, event='menu_or_loading', usable=False, peak='center',
+            moments.append(dict(id=i, highlight=1, event='menu_or_loading', usable=False, peak_frame=3,
                                 note='Scoreboard overlay'))
         elif i == 1:
-            moments.append(dict(id=i, highlight=10, event='multi_elimination', usable=True, peak='after',
+            moments.append(dict(id=i, highlight=10, event='multi_elimination', usable=True, peak_frame=5,
                                 note='Two eliminations in quick succession'))
         else:
-            moments.append(dict(id=i, highlight=3, event='movement', usable=True, peak='center', note='Rotation'))
+            moments.append(dict(id=i, highlight=3, event='movement', usable=True, peak_frame=3, note='Rotation'))
     return dict(moments=moments, sequence=[i for i in ids if i] + [999], rationale='Build to the double.')
 
 
@@ -76,21 +82,21 @@ class VisionDirectorTests(unittest.TestCase):
         self.assertEqual(request['output_config']['format']['type'], 'json_schema')
         blocks = request['messages'][0]['content']
         images = [b for b in blocks if b['type'] == 'image']
-        self.assertEqual(len(images), 12)
-        for image in images[:3]:
+        self.assertEqual(len(images), 4)   # one numbered six-frame strip per candidate
+        for image in images:
             jpeg = base64.standard_b64decode(image['source']['data'])
             decoded = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height',
                                       '-of', 'csv=p=0', '-'], input=jpeg, capture_output=True, check=True)
-            self.assertEqual(decoded.stdout.decode().strip(), '512,288')
+            self.assertEqual(decoded.stdout.decode().strip(), '768,288')
         serialized = json.dumps(request)
         self.assertNotIn('secret-match-name', serialized)
         self.assertNotIn(str(self.root), serialized)
-        self.assertEqual(report['frames_sent'], 12)
+        self.assertEqual(report['images_sent'], 4); self.assertEqual(report['frames_per_image'], 6)
         self.assertEqual(report['usable'], 3)
         by_time = {round(c.get('activity_score', 0), 2): c for c in candidates}
         self.assertTrue(by_time[.9]['exclude'])
         self.assertEqual(by_time[.8]['score'], 1.0)
-        self.assertAlmostEqual(by_time[.8]['time'], 12.6)
+        self.assertAlmostEqual(by_time[.8]['time'], 12.5)   # strip starts 10.5 s; frame 5 = +2.0 s
         self.assertEqual(by_time[.8]['event'], 'multi_elimination')
         self.assertEqual(by_time[.8]['story_rank'], 0)
 
@@ -102,6 +108,7 @@ class VisionDirectorTests(unittest.TestCase):
                        dict(good, moments=[dict(good['moments'][1], id=True)]),
                        dict(good, moments=[dict(good['moments'][1], event='headshot_x9')]),
                        dict(good, moments=[good['moments'][1], good['moments'][1]]),
+                       dict(good, moments=[dict(good['moments'][1], peak_frame=7)]),
                        dict(good, moments=[])):
             with self.assertRaises(ValueError):
                 validate_review(broken, len(pool))
@@ -161,6 +168,58 @@ class VisionDirectorTests(unittest.TestCase):
             for bad in excluded:
                 self.assertTrue(clip.start+clip.duration <= bad['time']-1+1e-6 or clip.start >= bad['time']+1-1e-6)
         self.assertTrue(any(c.start <= best['time'] <= c.start+c.duration for c in timeline.clips))
+
+    def test_cut_review_swaps_are_validated_and_applied(self):
+        song, output = self.root/'song.wav', self.root/'reviewed.mp4'
+        write_song(song, bpm=128, seconds=20, lift_bar=4)
+        seen = {}
+
+        def cut(text):
+            seen['text'] = text
+            return dict(swaps=[dict(shot=1, alternate=0, reason='Stronger opener'),
+                               dict(shot=2, alternate=1, reason='Overlapping test swap')], notes='Two swaps')
+        settings = Settings(width=160, height=90, fps=30, duration=8, quality='draft',
+                            minimum_clip=1.5, maximum_clip=2.5)
+        report = create_montage([self.video], song, output, settings,
+                                story=dict(edit_profile='cinematic', transition='cut'),
+                                ai_editor=ClaudeDirector(client=FakeClient(judge, cut=cut)))
+        self.assertTrue(report['full_decode'])
+        analysis = json.loads(output.with_suffix('.analysis.json').read_text())
+        review = analysis['ai_editor']['cut_review']
+        self.assertIn('Planned shots', seen['text']); self.assertIn('final shot (closing line)', seen['text'])
+        self.assertEqual(review['swaps_applied'][0]['shot'], 1)
+        self.assertEqual(review['swaps_applied'][0]['reason'], 'Stronger opener')
+        self.assertEqual(len(review['swaps_applied'])+len(review['swaps_rejected']), 2)
+        timeline = Timeline.load(output.with_suffix('.timeline.json'))
+        for swap in review['swaps_applied']:
+            clip = timeline.clips[swap['shot']-1]
+            self.assertTrue(clip.start <= swap['source_time'] <= clip.start+clip.duration)
+        self.assertAlmostEqual(sum(c.duration for c in timeline.clips), 8, places=6)
+        for i, a in enumerate(timeline.clips):
+            for b in timeline.clips[i+1:]:
+                self.assertTrue(a.start+a.duration <= b.start+1e-6 or b.start+b.duration <= a.start+1e-6)
+
+    def test_swap_rules_and_failed_reviews_keep_the_cut(self):
+        with self.assertRaises(ValueError):
+            validate_swaps(dict(swaps=[dict(shot=9, alternate=0, reason='x')], notes=''), 3, 2)
+        with self.assertRaises(ValueError):
+            validate_swaps(dict(swaps=[dict(shot=1, alternate=0, reason='x')]*2, notes=''), 3, 2)
+        with self.assertRaises(ValueError):
+            validate_swaps(dict(swaps=[dict(shot=i, alternate=i, reason='x') for i in range(1, 6)], notes=''), 9, 9)
+        timeline = Timeline(1, 'm', Settings().__dict__, [Clip(str(self.video), 0, 2, .5), Clip(str(self.video), 10, 2, .5)])
+        moment = dict(source=str(self.video), time=11.0, score=1.0, source_duration=30.0)
+        _, applied, rejected = swap_shots(timeline, [(0, moment)])
+        self.assertEqual(applied, []); self.assertEqual(rejected[0]['reason'], 'would reuse footage already in the cut')
+        blocked = dict(source=str(self.video), time=20.0, exclude=True, span=[19.0, 21.0])
+        _, _, rejected = swap_shots(timeline, [(0, dict(moment, time=20.0))], [blocked])
+        self.assertEqual(rejected[0]['reason'], 'covers a non-gameplay span')
+        song, output = self.root/'song.wav', self.root/'kept.mp4'
+        write_song(song, bpm=128, seconds=20, lift_bar=4)
+        report = create_montage([self.video], song, output, Settings(width=160, height=90, duration=6, quality='draft'),
+                                ai_editor=ClaudeDirector(client=FakeClient(judge, cut=lambda text: {'swaps': 'nope'})))
+        self.assertTrue(report['full_decode'])
+        analysis = json.loads(output.with_suffix('.analysis.json').read_text())
+        self.assertIn('error', analysis['ai_editor']['cut_review'])
 
 
 if __name__ == '__main__':

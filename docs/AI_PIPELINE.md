@@ -74,3 +74,19 @@ Enable with `montage-editor create ... --claude-editor` or Director → "Automat
 `ANTHROPIC_API_KEY` or `ant auth login`. Roughly 72 images ≈ 15-20k input tokens per montage.
 Tests use a mocked transport with real frame extraction and real renders; no live Claude review has
 been run in this repository, so judgement quality on real gameplay is not yet measured.
+
+
+### 2026-10-02 upgrade: frame strips and cut review
+
+- Each reviewed candidate is now one image: six numbered frames 0.5 s apart (3 s, 768×288), so Claude
+  sees the action unfold and picks `peak_frame` 1–6; the moment is re-anchored to that frame's time.
+  Roughly 300 image tokens per candidate (about half of the previous three separate frames).
+- **Cut review (second pass):** after the director plans the cut, Claude sees a contact sheet of the
+  planned shots S1..Sn (each at its key moment, with song position, intensity, phrase/lift starts and
+  which shot carries the closing line) and up to eight unused alternates A0..A7 with their scores.
+  It may propose up to four swaps. Each swap keeps the shot's musical timing, speed profile and
+  accents; `pipeline.swap_shots` rejects swaps whose moment would fall outside the shot, reuse
+  footage, cover a non-gameplay span or exceed the source. Applied and rejected swaps, reasons and
+  notes are recorded in the analysis sidecar. A failed review keeps the first-pass cut and records why.
+- Excluded (non-gameplay) candidates are never sent for review. Live judgement quality remains
+  unmeasured here (no credentials); tests use a mocked transport with real images and renders.
