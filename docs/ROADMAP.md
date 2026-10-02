@@ -13,3 +13,21 @@ Next priorities (planned):
 7. Windows execution/installer, GPU validation and live Ollama quality benchmarks.
 
 Kaiser-level artistry and studio-quality delivery are goals requiring qualitative evaluation.
+
+## Status after the 2026-10-02 Claude continuation
+
+Implemented and tested: measured beat grid with drops/builds and manual correction; non-gameplay
+exclusion from learned HUD presence; gameplay audio transients; hero placement; per-cut transitions,
+smooth ramps, punch-ins, interpolated slow motion, looks, motion blur, follow reframe, swishes;
+opt-in Claude moment review with 6-frame strips and a review-the-cut pass; music from YouTube/Spotify
+links; progress/cancel, presets, preview→final, shot editing; benchmark with optional Claude judge;
+Windows CI and a PyInstaller build.
+
+Still open, in priority order:
+1. Live validation: run the Claude editor and judge on the user's real footage and songs, and record
+   benchmark baselines (no credentials or user footage were available in the cloud session).
+2. HUD/non-gameplay calibration on more games (measured on one game so far); kill-feed/hit-marker
+   reading per game (not attempted).
+3. Ground-truth beat/downbeat/drop labels for real songs; swing, tempo changes and non-4/4.
+4. Impact sound effects (no CC0 source reachable in-session), calibrated colour/HDR, GPU encoding.
+5. Windows installer/signing on top of the CI-built one-folder app; FFmpeg bundling decision.

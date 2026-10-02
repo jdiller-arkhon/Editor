@@ -137,3 +137,11 @@ Preserve existing working editing/rendering instead of replacing it with extensi
 ## Claude kickoff prompt
 
 Continue my DRIFT Universal AI Gaming Montage Editor in https://github.com/jdiller-arkhon/Editor on feat/working-montage-pipeline (PR #1). Read CLAUDE.md and docs/CLAUDE_HANDOFF.md, fetch the current repository, inspect the development log and run the core and desktop tests before changing anything. Keep the refined monochrome UI and subtle Christian influence with explicit faith available in Creative controls. Focus on the quality of montages the app automatically generates, not on polishing a demonstration clip. Preserve the working pipeline and regression safeguards. Report actual starting state, implemented/experimental/planned boundaries and your next concrete engineering priority; then proceed with meaningful tested improvements and push them to the same repository.
+
+## Update — 2026-10-02 continuation (branch `claude/drift-montage-handoff-poejrd`)
+
+Work continued on `claude/drift-montage-handoff-poejrd`, based on PR #1's head. New modules:
+`rhythm.py` (beat grid, drops, cut planning), `screen_analysis.py` (HUD-presence exclusion, audio
+transients), `craft.py` (finishing), `vision_director.py` (Claude moment + cut review),
+`music_sources.py` (YouTube/Spotify links), `jobs.py` (cancel/progress), `benchmark.py`.
+See DEVELOPMENT_LOG for measured results, bugs found and limits, and ROADMAP for what is open.
