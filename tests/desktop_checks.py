@@ -86,6 +86,67 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn('beat_override',window.story())
         window.close()
 
+    def test_cancel_reports_without_an_error_dialog(self):
+        from montage_editor import jobs
+        window=Studio()
+        job=RenderJob(lambda:(_ for _ in ()).throw(jobs.Cancelled('Cancelled')))
+        messages=[]
+        job.failed.connect(messages.append)
+        job.run()
+        self.assertEqual(messages,['Cancelled'])
+        with patch('montage_editor.desktop.QMessageBox.warning') as warning:
+            window.failed(messages[0])
+            warning.assert_not_called()
+        self.assertIn('nothing was saved',window.status.text())
+        window.on_progress(.42,'Rendering shot 3 of 9')
+        self.assertEqual(window.progress.value(),420)
+        self.assertIn('42%',window.status.text())
+        window.close()
+
+    def test_presets_preview_finalise_and_shot_editing(self):
+        import subprocess,json
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'flow.ini'),QSettings.IniFormat))
+            window.export_preset.setCurrentIndex(window.export_preset.findData('shorts-1080x1920'))
+            self.assertEqual((window.delivery_settings().width,window.delivery_settings().height),(1080,1920))
+            window.footage.addItem('clip.mp4');window.music_path='song.wav'
+            with patch.object(window,'resolve_song',return_value=True), \
+                 patch('montage_editor.desktop.RenderJob') as job, \
+                 patch('montage_editor.desktop.create_montage') as create:
+                window.export(automatic=True,preview=True)
+                job.call_args.args[0]()
+                settings,story=create.call_args.args[3:5]
+                self.assertEqual((settings.width,settings.height,settings.quality),(360,640,'draft'))
+                self.assertEqual(story['interpolation'],'blend')
+            window.job=None
+            video=Path(d)/'v.mp4'
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=320x180:rate=30','-t','30',
+                            '-c:v','libx264','-pix_fmt','yuv420p',str(video)],check=True)
+            draft=Timeline(1,'song.wav',draft_settings:=dict(Settings(width=360,height=640,quality='draft').__dict__),
+                           [Clip(str(video),2,2,.5),Clip(str(video),10,3,.7)])
+            preview=Path(d)/'p.timeline.json';draft.save(preview)
+            (Path(d)/'p.analysis.json').write_text(json.dumps({'candidates':[
+                dict(source=str(video),time=25.0,score=.9,source_duration=30.0,event='clutch')]}))
+            window.completed(dict(duration=5,width=360,height=640),str(Path(d)/'p.mp4'),False,True)
+            self.assertTrue(window.finalize_button.isEnabled())
+            with patch('montage_editor.desktop.RenderJob') as job, patch('montage_editor.desktop.render') as render:
+                window.finalize_preview()
+                job.call_args.args[0]()
+                final=render.call_args.args[0]
+            self.assertEqual((final.settings['width'],final.settings['height'],final.settings['quality']),(1080,1920,'high'))
+            self.assertEqual(final.interpolation,'motion')
+            window.job=None
+            window.show_timeline(draft);window.timeline_table.selectRow(0)
+            self.assertTrue(all(b.isEnabled() for b in window.edit_buttons))
+            window.move_selected(1)
+            self.assertTrue(window.timeline.clips[1].start<=3<=window.timeline.clips[1].start+3)
+            window.timeline_table.selectRow(0)
+            with patch('montage_editor.desktop.QInputDialog.getItem',return_value=(None,True)) as item:
+                item.side_effect=lambda *a,**k:(a[3][0],True)
+                window.swap_selected()
+            self.assertTrue(window.timeline.clips[0].start<=25<=window.timeline.clips[0].start+2)
+            window.close()
+
     def test_reference_workspace_and_real_analysis(self):
         window=Studio()
         self.assertFalse(window.banner.art.isNull())

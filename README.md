@@ -122,3 +122,11 @@ Quick-create can automatically choose an energetic excerpt of your selected loca
 The Advanced checkbox disables this when you want the original opening. Song selection remains
 local filename matching; no songs are downloaded. The excerpt algorithm measures energy and
 variation, not lyrical meaning or musical phrases. Its source offset persists in projects.
+
+## Workflow (desktop)
+
+Pick **Export for** (YouTube, Shorts/TikTok, Instagram, or Custom), then **Create montage**, or **Quick preview**
+for a fast draft and **Render final from preview** for the identical edit at full quality. Progress shows each
+stage; **Cancel** stops immediately and saves nothing. After a render, select a shot in the timeline to move it
+or swap it for another analysed moment, then **Render loaded timeline**. Creative controls hold tempo correction
+(Tap tempo), look, slow-motion quality, motion blur and transition swishes.

@@ -17,6 +17,8 @@ explosions and impacts. It is evidence of loud events, not of kills.
 """
 import subprocess
 
+from . import jobs
+
 import numpy as np
 
 WIDTH, HEIGHT = 320, 180
@@ -35,7 +37,7 @@ def edges(frame):
 
 
 def _decode(arguments):
-    raw = subprocess.run(arguments, check=True, capture_output=True).stdout
+    raw = jobs.run(arguments).stdout
     size = WIDTH*HEIGHT
     count = len(raw)//size
     return np.frombuffer(raw[:count*size], np.uint8).reshape(count, HEIGHT, WIDTH)
@@ -79,13 +81,13 @@ def low_spans(times, relative, gap=.6):
 
 
 def transients(path, duration, hop=.05, rate=8000, window=512):
-    """Broadband positive spectral flux of the gameplay audio, normalised to [0, 1]."""
+    """Broadband positive spectral flux spikes of the gameplay audio, scored 0-1 against the median."""
     flux, previous = [], None
     step = int(rate*hop)
     for start in np.arange(0, duration, 30):
-        raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(start), '-i', path, '-t',
+        raw = jobs.run(['ffmpeg', '-v', 'error', '-ss', str(start), '-i', path, '-t',
                               str(min(30, duration-start)), '-vn', '-ac', '1', '-ar', str(rate),
-                              '-f', 'f32le', 'pipe:1'], check=True, capture_output=True).stdout
+                              '-f', 'f32le', 'pipe:1']).stdout
         samples = np.frombuffer(raw, '<f4')
         for offset in range(0, len(samples), step):
             block = np.zeros(window)
@@ -97,5 +99,8 @@ def transients(path, duration, hop=.05, rate=8000, window=512):
     flux = np.asarray(flux)
     if not len(flux) or flux.max() <= 0:
         return flux, hop
-    scale = float(np.quantile(flux, .995)) or float(flux.max())
-    return np.clip(flux/scale, 0, 1), hop
+    # Strength relative to the clip's typical level: steady noise scores ~0, a spike far
+    # above it (≥8× the median) scores 1. Self-normalising to the maximum would turn
+    # ordinary noise into "transients" whenever a clip has no real ones.
+    typical = float(np.median(flux)) or float(flux.mean()) or 1e-9
+    return np.clip((flux/typical-2)/6, 0, 1), hop

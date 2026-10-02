@@ -1,5 +1,6 @@
 """Desktop workspace connected to the real local montage engine."""
 import json
+import threading
 import numpy as np
 from pathlib import Path
 import sys
@@ -15,10 +16,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
     QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea, QInputDialog)
 
+from . import jobs
 from .workspace_widgets import BrandMark, CinemaCanvas, TimelineLanes, CathedralBanner
 from .music_library import find_songs, AUDIO, VIDEO
-from .config import Settings
-from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay
+from .config import Settings, draft_of, preset
+from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay, exchange_shots, retarget, swap_shots
 
 STORY_TONES = {
     'subtle': ('Subtle • hope & perseverance', 'Keep the faith.',
@@ -32,6 +34,8 @@ STORY_TONES = {
 # Palette: white canvas, ink text, violet→pink primary accent, teal (music) and amber (dialogue).
 INK, MUTED, LINE = '#15131f', '#6b6880', '#e9e7f2'
 VIOLET, PINK, TEAL, AMBER = '#6d4dff', '#ff4f8b', '#11b3a3', '#ffad1f'
+
+CANCELLED = 'Cancelled'
 
 STYLE = '''
 QWidget {background:#ffffff;color:#15131f;font-family:Manrope,Segoe UI,sans-serif;font-size:13px;}
@@ -127,14 +131,19 @@ def panel(kind='panel'):
 class RenderJob(QThread):
     done = Signal(object)
     failed = Signal(str)
+    progress = Signal(float, str)
 
     def __init__(self, operation):
         super().__init__()
         self.operation = operation
+        self.cancel = threading.Event()
 
     def run(self):
         try:
-            self.done.emit(self.operation())
+            with jobs.job(self.cancel, lambda fraction, message: self.progress.emit(fraction, message)):
+                self.done.emit(self.operation())
+        except jobs.Cancelled:
+            self.failed.emit(CANCELLED)
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -228,9 +237,24 @@ class Studio(QMainWindow):
         for text,kind in [('Beat grid','chip'),('Speed ramps','chipPink'),('Punch-ins','chipAmber'),('Mastered audio','chipTeal')]:
             chips.addWidget(label(text,kind))
         chips.addStretch(); intake_layout.addLayout(chips)
+        self.export_preset=QComboBox()
+        for title,key in [('YouTube • 1080p 30 fps','youtube-1080p30'),('YouTube • 1080p 60 fps','youtube-1080p60'),
+                          ('YouTube • 1440p 60 fps • master','youtube-1440p60'),('Shorts / TikTok • 1080×1920','shorts-1080x1920'),
+                          ('Instagram • 1080×1350','instagram-1080x1350'),('Custom • Creative controls','custom')]:
+            self.export_preset.addItem(title,key)
+        preset_row=QHBoxLayout();preset_row.addWidget(label('EXPORT FOR','eyebrow'));preset_row.addWidget(self.export_preset,1)
+        intake_layout.addLayout(preset_row)
         self.create_button=QPushButton('Create montage');self.create_button.setObjectName('primary')
         self.create_button.clicked.connect(lambda:self.export(automatic=True))
         intake_layout.addWidget(self.create_button)
+        preview_row=QHBoxLayout()
+        self.preview_button=QPushButton('Quick preview');self.preview_button.setToolTip('Fast low-resolution draft of the same edit')
+        self.preview_button.clicked.connect(lambda:self.export(automatic=True,preview=True));preview_row.addWidget(self.preview_button)
+        self.finalize_button=QPushButton('Render final from preview');self.finalize_button.setEnabled(False)
+        self.finalize_button.setToolTip('Render the previewed edit at full quality without re-analysing')
+        self.finalize_button.clicked.connect(self.finalize_preview);preview_row.addWidget(self.finalize_button)
+        intake_layout.addLayout(preview_row)
+        self.preview_timeline=None
         secondary=QHBoxLayout()
         advanced=QPushButton('Creative controls');advanced.clicked.connect(self.toggle_advanced);secondary.addWidget(advanced)
         load = QPushButton('Open timeline'); load.clicked.connect(self.load_timeline); secondary.addWidget(load)
@@ -292,10 +316,21 @@ class Studio(QMainWindow):
         track.addWidget(self.lanes)
         track.addWidget(self.timeline_table)
         self.timeline_table.hide()
+        edit_row=QHBoxLayout()
+        self.edit_buttons=[]
+        for text,action in [('◀ Move shot earlier',lambda:self.move_selected(-1)),('Move shot later ▶',lambda:self.move_selected(1)),
+                            ('Swap with alternate…',self.swap_selected)]:
+            button=QPushButton(text);button.clicked.connect(action);button.setEnabled(False)
+            edit_row.addWidget(button);self.edit_buttons.append(button)
+        edit_row.addStretch();track.addLayout(edit_row)
+        self.alternates=[]
         track.addWidget(label('Built from the generated or loaded timeline. Manual clip editing is planned.','muted'))
         column.addWidget(timeline)
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
-        column.addWidget(self.progress)
+        progress_row=QHBoxLayout(); progress_row.addWidget(self.progress,1)
+        self.cancel_button=QPushButton('Cancel');self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_job);progress_row.addWidget(self.cancel_button)
+        column.addLayout(progress_row)
         self.status = label('Ready for your footage.','status')
         self.status.setWordWrap(True); column.addWidget(self.status)
         column.addStretch()
@@ -632,6 +667,7 @@ class Studio(QMainWindow):
         self.timeline_table.show();self.timeline_table.setMaximumHeight(120)
         self.workspace.setMaximumHeight(720)
         self.timeline=timeline; self.lanes.set_timeline(timeline); self.replay_button.setEnabled(True)
+        for button in self.edit_buttons:button.setEnabled(True)
         self.timeline_table.setRowCount(len(timeline.clips))
         for row,clip in enumerate(timeline.clips):
             for col,value in enumerate([Path(clip.source).name,f'{clip.start:.2f}s',f'{clip.duration:.2f}s',f'{clip.score:.3f}']):
@@ -647,14 +683,28 @@ class Studio(QMainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Open timeline','','Timeline (*.json)')
         if path:
             try: self.show_timeline(Timeline.load(path))
-            except Exception as error: QMessageBox.warning(self,'Cannot load timeline',str(error))
+            except Exception as error: QMessageBox.warning(self,'Cannot load timeline',str(error));return
+            analysis=Path(path).with_name(Path(path).name.replace('.timeline.json','.analysis.json'))
+            try:self.alternates=[c for c in json.loads(analysis.read_text()).get('candidates',[]) if not c.get('exclude')]
+            except (OSError,ValueError):self.alternates=[]
 
-    def export(self,checked=False,replay=False,automatic=False):
+    def delivery_settings(self):
+        key=self.export_preset.currentData()
+        if key and key!='custom':
+            return preset(key,duration=self.duration.value())
+        width,height=self.resolution.currentData()
+        return Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value(),quality=self.quality.currentData())
+
+    def export(self,checked=False,replay=False,automatic=False,preview=False,timeline=None):
         if self.job is not None: return
+        if timeline is not None: replay=True   # finalising an existing edit needs no clips or song lookup
         if not replay and not self.footage.count():
             QMessageBox.information(self,'Add your clips','Drop gameplay clips into the window first.');return
         if not replay and not self.resolve_song():return
-        if automatic:
+        if preview:
+            cache=QStandardPaths.writableLocation(QStandardPaths.CacheLocation) or str(Path.home()/'.cache'/'drift')
+            path=str(Path(cache)/'previews'/(datetime.now().strftime('preview-%Y%m%d-%H%M%S-')+uuid4().hex[:6]+'.mp4'))
+        elif automatic or timeline is not None:
             movies=QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or str(Path.home()/'Videos')
             path=str(Path(movies)/'DRIFT'/(datetime.now().strftime('montage-%Y%m%d-%H%M%S-')+uuid4().hex[:6]+'.mp4'))
         else:
@@ -662,18 +712,22 @@ class Studio(QMainWindow):
         if not path: return
         if not path.lower().endswith('.mp4'): path+='.mp4'
         try:
-            if replay:
+            if timeline is not None:
+                replay=True
+                operation=lambda:render(timeline,path)
+            elif replay:
                 timeline=self.timeline
                 operation=lambda:render(timeline,path)
             else:
-                width,height=self.resolution.currentData()
-                settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value(),quality=self.quality.currentData())
+                settings=self.delivery_settings()
+                if preview:settings=draft_of(settings)
                 sources=[self.footage.item(i).text() for i in range(self.footage.count())]
                 song=self.music_path; story=self.story()
                 if automatic:
                     story.update(faith_message=self.closing_line.text().strip(),edit_profile='cinematic',
                                  gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',
                                  auto_music_section=self.auto_music_section.isChecked())
+                if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
                 if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
@@ -686,26 +740,86 @@ class Studio(QMainWindow):
             QMessageBox.warning(self,'Check story settings',str(error)); return
         self.create_button.setEnabled(False);self.create_button.setText('Creating your montage…')
         self.export_button.setEnabled(False); self.replay_button.setEnabled(False)
-        self.progress.setRange(0,0); self.status.setText('Analyzing and rendering • The workspace stays responsive. Please wait for validation.')
+        self.progress.setRange(0,1000); self.progress.setValue(0); self.status.setText('Starting • The workspace stays responsive.')
         self.job=RenderJob(operation)
-        self.job.done.connect(lambda report:self.completed(report,path,replay))
+        self.job.done.connect(lambda report:self.completed(report,path,replay,preview))
         self.job.failed.connect(self.failed)
         self.job.finished.connect(self.finished)
+        self.job.progress.connect(self.on_progress)
+        self.cancel_button.setEnabled(True)
         self.job.start()
 
-    def completed(self,report,path,replay):
+    def completed(self,report,path,replay,preview=False):
         self.last_output=path
+        analysis=Path(path).with_suffix('.analysis.json')
+        if analysis.is_file():
+            try:self.alternates=[c for c in json.loads(analysis.read_text()).get('candidates',[]) if not c.get('exclude')]
+            except (OSError,ValueError):self.alternates=[]
+        if preview:
+            self.preview_timeline=Path(path).with_suffix('.timeline.json')
+            self.finalize_button.setEnabled(True)
         self.save_preferences()
         self.status.setText(f"Validated export • {report['duration']:.2f}s • {report['width']} × {report['height']} • "+
                             ('Shortened to available media.' if report.get('shortened') else 'Full decode passed.'))
         rhythm=report.get('music_alignment') or {}
-        if rhythm.get('mode')=='beats' and rhythm.get('tempo_bpm'):
+        if str(rhythm.get('mode','')).startswith('beats') and rhythm.get('tempo_bpm'):
             self.status.setText(self.status.text()+f" Cut to a measured {rhythm['tempo_bpm']:.0f} BPM beat grid.")
         self.open_button.setEnabled(True); self.preview_file(path)
         if not replay: self.show_timeline(Timeline.load(Path(path).with_suffix('.timeline.json')))
-        self.status.setText(self.status.text()+' Saved to '+path)
+        self.status.setText(self.status.text()+(' Preview ready — Render final when you like it.' if preview else ' Saved to '+path))
+
+    def finalize_preview(self):
+        if self.preview_timeline is None:return
+        try:
+            draft=Timeline.load(self.preview_timeline)
+            final=retarget(draft,self.delivery_settings(),interpolation=self.slowmo.currentData())
+        except Exception as error:
+            QMessageBox.warning(self,'Cannot finalise preview',str(error));return
+        self.export(timeline=final)
+
+    def selected_shot(self):
+        row=self.timeline_table.currentRow()
+        return row if self.timeline is not None and 0<=row<len(self.timeline.clips) else None
+
+    def move_selected(self,step):
+        row=self.selected_shot()
+        if row is None or not 0<=row+step<len(self.timeline.clips):return
+        try:
+            edited=exchange_shots(self.timeline,row,row+step)
+        except ValueError as error:
+            QMessageBox.information(self,'Cannot move shot',str(error));return
+        self.show_timeline(edited);self.timeline_table.selectRow(row+step)
+        self.status.setText(f'Moved shot {row+1} • Render loaded timeline to see the edit.')
+
+    def swap_selected(self):
+        row=self.selected_shot()
+        if row is None:return
+        used=lambda c:any(o.source==c['source'] and o.start<=c['time']<=o.start+o.duration for o in self.timeline.clips)
+        options=sorted((c for c in self.alternates if not used(c)),key=lambda c:-c['score'])[:30]
+        if not options:
+            QMessageBox.information(self,'No alternates','Generate a montage first; unused analysed moments appear here.');return
+        names=[f"{Path(c['source']).name} @ {c['time']:.1f}s • score {c['score']:.2f}"+(f" • {c['event']}" if c.get('event') else '')
+               for c in options]
+        choice,ok=QInputDialog.getItem(self,'Swap shot',f'Replace shot {row+1} with:',names,0,False)
+        if not ok:return
+        edited,applied,rejected=swap_shots(self.timeline,[(row,options[names.index(choice)])])
+        if rejected:
+            QMessageBox.information(self,'Cannot swap',rejected[0]['reason']);return
+        self.show_timeline(edited);self.timeline_table.selectRow(row)
+        self.status.setText(f'Swapped shot {row+1} • Render loaded timeline to see the edit.')
+
+    def on_progress(self,fraction,message):
+        self.progress.setRange(0,1000);self.progress.setValue(int(fraction*1000))
+        self.status.setText(f'{message} • {fraction*100:.0f}%')
+
+    def cancel_job(self):
+        if self.job is not None:
+            self.job.cancel.set();self.cancel_button.setEnabled(False)
+            self.status.setText('Cancelling…')
 
     def failed(self,message):
+        if message==CANCELLED:
+            self.status.setText('Cancelled • nothing was saved.');return
         self.status.setText('Export failed • '+message)
         QMessageBox.warning(self,'Export failed',message)
 
@@ -713,6 +827,7 @@ class Studio(QMainWindow):
         self.progress.setRange(0,1); self.progress.setValue(1)
         self.create_button.setEnabled(True);self.create_button.setText('Create montage')
         self.export_button.setEnabled(True); self.replay_button.setEnabled(self.timeline is not None)
+        self.cancel_button.setEnabled(False)
         self.job.deleteLater(); self.job=None
 
     def open_export(self):
@@ -720,7 +835,10 @@ class Studio(QMainWindow):
 
     def closeEvent(self,event):
         if self.job is not None:
-            QMessageBox.information(self,'Job in progress','Wait for the current job before closing.'); event.ignore()
+            answer=QMessageBox.question(self,'Job in progress','Cancel the current job and close?')
+            if answer==QMessageBox.Yes:
+                self.job.cancel.set();self.job.wait(30000);event.accept()
+            else:event.ignore()
         else: event.accept()
 
 

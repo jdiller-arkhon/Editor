@@ -17,13 +17,14 @@ from .transitions import BLENDS, EFFECTS, LOSSLESS, compose
 from .music_sections import choose_section
 from . import screen_analysis as screens
 from . import craft
+from . import jobs
 from .rhythm import alignment_report, beat_grid, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
 
 
 def run(args, cwd=None):
-    return subprocess.run(args, check=True, capture_output=True, cwd=cwd)
+    return jobs.run(args, cwd=cwd)
 
 
 def probe(path):
@@ -418,6 +419,29 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
     return timeline
 
 
+def _place(slot, moment):
+    """Footage for ``slot`` (a Clip) centred on ``moment`` with the slot's musical timing."""
+    target = slot.anchor_output if slot.anchor_output is not None else slot.duration/2
+    offset = source_offset(target, slot.duration, slot.speed_profile)
+    if moment['source_duration']+1e-6 < slot.duration:
+        return None, 'source too short for this shot'
+    start = min(max(0.0, moment['time']-offset), moment['source_duration']-slot.duration)
+    if not start+.1*slot.duration <= moment['time'] <= start+.9*slot.duration:
+        return None, 'moment would fall outside the shot'
+    anchored = abs(start+offset-moment['time']) <= 1e-5
+    return Clip(moment['source'], start, slot.duration, moment.get('score', slot.score), slot.speed_profile,
+                moment['time'] if anchored else None, target if anchored else None, list(slot.accents)), None
+
+
+def _conflict(clips, index, clip, blocked):
+    if any(o.source == clip.source and clip.start < o.start+o.duration-1e-6 and o.start < clip.start+clip.duration-1e-6
+           for j, o in enumerate(clips) if j != index):
+        return 'would reuse footage already in the cut'
+    if any(src == clip.source and clip.start < b and a < clip.start+clip.duration for src, a, b in blocked):
+        return 'covers a non-gameplay span'
+    return None
+
+
 def swap_shots(timeline, swaps, excluded=()):
     """Replace shots' footage with alternate moments, keeping each shot's musical timing.
 
@@ -429,31 +453,56 @@ def swap_shots(timeline, swaps, excluded=()):
     applied, rejected = [], []
     blocked = [(c['source'], *(c.get('span') or (c['time']-1, c['time']+1))) for c in excluded]
     for index, candidate in swaps:
-        clip = clips[index]
-        target = clip.anchor_output if clip.anchor_output is not None else clip.duration/2
-        offset = source_offset(target, clip.duration, clip.speed_profile)
-        start = min(max(0.0, candidate['time']-offset), candidate['source_duration']-clip.duration)
-        reason = None
-        if start < 0 or candidate['source_duration']+1e-6 < clip.duration:
-            reason = 'source too short for this shot'
-        elif not start+.1*clip.duration <= candidate['time'] <= start+.9*clip.duration:
-            reason = 'moment would fall outside the shot'
-        elif any(o.source == candidate['source'] and start < o.start+o.duration-1e-6 and
-                 o.start < start+clip.duration-1e-6 for j, o in enumerate(clips) if j != index):
-            reason = 'would reuse footage already in the cut'
-        elif any(src == candidate['source'] and start < b2 and a2 < start+clip.duration
-                 for src, a2, b2 in blocked):
-            reason = 'covers a non-gameplay span'
+        clip, reason = _place(clips[index], candidate)
+        reason = reason or _conflict(clips, index, clip, blocked)
         if reason:
             rejected.append(dict(shot=index+1, reason=reason)); continue
-        anchored = abs(start+offset-candidate['time']) <= 1e-5
-        clips[index] = Clip(candidate['source'], start, clip.duration, candidate['score'], clip.speed_profile,
-                            candidate['time'] if anchored else None, target if anchored else None,
-                            list(clip.accents))
+        clips[index] = clip
         applied.append(dict(shot=index+1, source_time=round(candidate['time'], 3)))
     result = replace(timeline, clips=clips)
     result.validate()
     return result, applied, rejected
+
+
+def shot_moment(clip):
+    """The source instant a shot is built around (its anchor, else its middle)."""
+    if clip.anchor_source is not None:
+        return clip.anchor_source
+    return clip.start+source_offset(clip.duration/2, clip.duration, clip.speed_profile)
+
+
+def exchange_shots(timeline, first, second, durations=None):
+    """Swap the footage of two shots; each keeps its slot's timing. Raises if it cannot fit."""
+    clips = list(timeline.clips)
+    durations = durations or {}
+
+    def moment(clip):
+        length = durations.get(clip.source) or probe(clip.source)['duration']
+        return dict(source=clip.source, time=shot_moment(clip), score=clip.score, source_duration=length)
+    a, reason_a = _place(clips[first], moment(clips[second]))
+    b, reason_b = _place(clips[second], moment(clips[first]))
+    if reason_a or reason_b:
+        raise ValueError(f'Cannot exchange these shots: {reason_a or reason_b}')
+    clips[first], clips[second] = a, b
+    for index in (first, second):
+        reason = _conflict(clips, index, clips[index], [])
+        if reason:
+            raise ValueError(f'Cannot exchange these shots: {reason}')
+    result = replace(timeline, clips=clips)
+    result.validate()
+    return result
+
+
+def retarget(timeline, settings, **finishing):
+    """Same edit at another resolution/quality (e.g. final render of a draft preview).
+
+    Shot timing is frame-quantised, so the frame rate must not change.
+    """
+    if settings.fps != timeline.settings['fps']:
+        raise ValueError('A preview can only be finalised at the same frame rate')
+    result = replace(timeline, settings=asdict(settings), **finishing)
+    result.validate()
+    return result
 
 
 def validate_output(path, settings, expected_duration):
@@ -535,6 +584,7 @@ def render(timeline, output):
             (temporary/'faith-title.txt').write_text(timeline.faith_message,encoding='utf-8')
         for i,clip in enumerate(timeline.clips):
             LOG.info('Rendering clip %d/%d', i+1, len(timeline.clips))
+            jobs.report(.75*i/len(timeline.clips), f'Rendering shot {i+1} of {len(timeline.clips)}')
             transition_filter = ''
             if timeline.transition in ('fade_black','fade_white'):
                 color = 'black' if timeline.transition == 'fade_black' else 'white'
@@ -588,6 +638,7 @@ def render(timeline, output):
         boundaries = []
         if timeline.transition in BLENDS and len(pieces)>1:
             LOG.info('Compositing %d transition boundaries',len(pieces)-1)
+            jobs.report(.75,'Compositing transitions')
             pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
                                         timeline.transition,timeline.transition_duration,temporary,run,
                                         timeline.boundary_transitions or None)
@@ -623,10 +674,10 @@ def render(timeline, output):
             # Measure the actual mixed programme, then apply the measured values.
             measure_inputs = inputs.copy()
             measure_inputs[2] = 'info'
-            measure = subprocess.run(measure_inputs + ['-filter_complex',';'.join(filters)+
+            jobs.report(.86,'Measuring loudness for mastering')
+            measure = run(measure_inputs + ['-filter_complex',';'.join(filters)+
                 ';[mixed]loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json[measured]',
-                '-map','[measured]','-t',str(duration),'-f','null','-'],
-                check=True,capture_output=True)
+                '-map','[measured]','-t',str(duration),'-f','null','-'])
             stderr = measure.stderr.decode(errors='replace')
             values = json.loads(stderr[stderr.rfind('{'):stderr.rfind('}')+1])
             keys = {'measured_I':'input_i','measured_TP':'input_tp',
@@ -637,11 +688,13 @@ def render(timeline, output):
                 f'{key}={values[value]}' for key,value in keys.items())+','
         filters.append('[mixed]'+mastering+'alimiter=limit=0.95:level=0:latency=1,aresample=48000[audio]')
         crf,preset = {'draft':('23','fast'),'high':('16','slow'),'master':('12','slow')}[settings.quality]
+        jobs.report(.9,'Encoding the final video')
         run(inputs + ['-filter_complex_threads','1','-filter_complex', ';'.join(filters), '-map', '0:v:0', '-map', '[audio]',
                       '-c:v','libx264','-crf',crf,'-preset',preset,'-pix_fmt','yuv420p','-threads','2',
                       '-c:a', 'aac', '-b:a', '320k', '-t', str(duration),
                       '-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709','-color_range','tv',
                       '-movflags', '+faststart', str(pending)])
+        jobs.report(.97,'Validating the export (full decode)')
         report = validate_output(pending, settings, duration)
         report['audio_mastering'] = 'measured two-pass loudnorm' if timeline.normalize_audio else 'peak limiter'
         report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips} |
@@ -681,6 +734,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                 output.with_suffix('.validation.json')]
     if output.exists() or any(p.exists() for p in sidecars):
         raise FileExistsError('Output or its project sidecars already exist')
+    jobs.report(0,'Reading your clips and song')
     sources = [probe(p) for p in gameplay]
     if len({s['path'] for s in sources}) != len(sources):
         raise ValueError('Duplicate gameplay inputs')
@@ -698,19 +752,22 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
             starts = phrases if any(t <= song['duration']-duration for t in phrases) else whole['downbeats']
             drops = [p['time'] for p in whole['phrases'] if 'drop' in p['kinds']]
         music_start = choose_section(whole['energy'],song['duration'],duration,starts=starts,drops=drops)
+    jobs.report(.06,'Finding the beat, bars and drops')
     analysis = music_analysis(song, duration, start=music_start, override=override)
     if story and story.get('auto_music_section') and rhythm_usable(whole):
         analysis.update(excerpt_grid(whole, music_start, duration))
         analysis['cut_mode'] = 'beats (manual grid)' if override else 'beats'
     candidates = []
     screen_report = {}
-    for source in sources:
+    for number, source in enumerate(sources):
         LOG.info('Analyzing %s', source['path'])
+        jobs.report(.12+.23*number/len(sources), f'Analysing gameplay {number+1} of {len(sources)}')
         candidates.extend(analyze_gameplay(source, settings, screen_report))
     ai_plan = None
     vision = None
     if ai_editor is not None:
         LOG.info('Requesting Claude vision review of candidate moments')
+        jobs.report(.36,'Claude is reviewing your best moments')
         candidates, vision = ai_editor.review(candidates, brief or '')
     if ai_model:
         from .ai_director import OllamaDirector, configure_plan, DEFAULT_BRIEF
@@ -723,6 +780,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     timeline = replace(timeline,music_start=music_start)
     if vision is not None and hasattr(ai_editor, 'review_cut'):
         LOG.info('Requesting Claude review of the planned cut')
+        jobs.report(.42,'Claude is reviewing the cut')
         try:
             timeline, vision['cut_review'] = ai_editor.review_cut(timeline, candidates, analysis, brief or '')
         except ValueError as error:
@@ -742,7 +800,9 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
-    report = render(timeline, output)
+    jobs.report(.45,'Rendering')
+    with jobs.span(.45, 1.0):
+        report = render(timeline, output)
     timeline.save(sidecars[0])
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan,
                                        'ai_editor': vision,

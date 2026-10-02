@@ -17,6 +17,8 @@ import json
 import logging
 import subprocess
 
+from . import jobs
+
 import numpy as np
 
 LOG = logging.getLogger(__name__)
@@ -103,9 +105,9 @@ def frame_time(time, duration, frame):
 
 
 def _jpeg(raw, width, height):
-    jpeg = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{width}x{height}',
+    jpeg = jobs.run(['ffmpeg', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{width}x{height}',
                            '-i', 'pipe:0', '-frames:v', '1', '-q:v', '5', '-f', 'image2pipe', '-c:v', 'mjpeg',
-                           'pipe:1'], input=raw, check=True, capture_output=True).stdout
+                           'pipe:1'], input=raw).stdout
     if not jpeg.startswith(b'\xff\xd8'):
         raise ValueError('Could not encode a review image')
     return jpeg
@@ -116,9 +118,8 @@ def labelled_frame(source, at, text):
     w, h = TILE
     vf = (f'scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,'
           f"drawtext=text='{text}':x=6:y=6:fontsize=18:fontcolor=yellow:box=1:boxcolor=black@0.65")
-    raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{max(0.0, at):.3f}', '-i', source, '-frames:v', '1',
-                          '-vf', vf, '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'],
-                         check=True, capture_output=True).stdout
+    raw = jobs.run(['ffmpeg', '-v', 'error', '-ss', f'{max(0.0, at):.3f}', '-i', source, '-frames:v', '1',
+                          '-vf', vf, '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1']).stdout
     if len(raw) != w*h*3:
         raise ValueError('Could not decode a review frame')
     return np.frombuffer(raw, np.uint8).reshape(h, w, 3)

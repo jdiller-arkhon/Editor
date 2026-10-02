@@ -5,6 +5,8 @@ existing lossless per-shot render; none changes shot timing.
 from pathlib import Path
 import subprocess
 
+from . import jobs
+
 import numpy as np
 
 LOOKS = {
@@ -48,9 +50,9 @@ def follow_track(path, start, duration, rate=4):
     and the crop only travels when the action is clearly off-centre.
     """
     width, height = 160, 90
-    raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{start:.3f}', '-i', path, '-t', f'{duration:.3f}',
+    raw = jobs.run(['ffmpeg', '-v', 'error', '-ss', f'{start:.3f}', '-i', path, '-t', f'{duration:.3f}',
                           '-an', '-vf', f'fps={rate},scale={width}:{height},format=gray', '-f', 'rawvideo',
-                          'pipe:1'], check=True, capture_output=True).stdout
+                          'pipe:1']).stdout
     frames = np.frombuffer(raw[:len(raw)//(width*height)*width*height], np.uint8).reshape(-1, height, width)
     columns = np.arange(width)/(width-1)
     centres, previous = [], None

@@ -149,3 +149,10 @@
 
 ## 2026-10-02 — Finishing (Claude continuation)
 - Added craft.py and Timeline finishing fields; desktop controls; bundled 4 CC0 swishes (~24 KB). Tests on rendered output: interpolation held-frame reduction, look saturation/monochrome, blur softening, follow-crop keeps an off-centre subject visible with no letterbox (mutation-checked: a centred crop fails), swish present on a push and absent on a hard cut. First test footage was flawed (saturated testsrc2, drawbox that cannot animate) and was corrected. 51 core, 11 desktop OK.
+
+## 2026-10-02 — Workflow: progress, cancel, presets, preview→final, shot editing (Claude continuation)
+- jobs.py: every FFmpeg call is cancellable (killed within ~0.2 s), progress maps stage fractions; desktop progress bar with percentages and a Cancel button; closing during a job offers to cancel. Cancelled jobs publish nothing (output and sidecars absent, tested).
+- Export presets (YouTube 1080p30/60, 1440p60 master, Shorts/TikTok 1080×1920, Instagram 1080×1350). Quick preview renders a ≤640 px draft at the same frame rate; Render final retargets that exact timeline (identical shots and transitions, tested) without re-analysis.
+- Timeline editing: move a shot earlier/later (footage exchanged, slot timing kept) and swap a shot with an unused analysed moment; both reject footage reuse/non-gameplay spans.
+- Found and fixed: finalising opened a song-lookup dialog (hung the offscreen test); gameplay-audio transients were self-normalised so steady noise scored as gunshots (now median-relative; the test passed earlier only by chance with a random noise seed).
+- Tests: 57 core, 13 desktop OK.
