@@ -113,3 +113,19 @@ before claiming professional artistic quality. Generated test patterns test mech
 - **Hero placement**: in cinematic heuristic edits the top 1–3 moments are reserved for the most intense
   music segments, so the best moment always makes the cut on the loudest part of the song. A moment
   at a source edge that cannot be exactly beat-anchored is still used if it sits inside the shot.
+
+
+### Drops, builds, timbre downbeats and beat correction (implemented)
+
+- **Drop**: a bar whose bass energy (<~150 Hz) is at least twice the previous two bars and ≥35% of the
+  song's loudest bass bar — a bass/kick entrance. **Build**: a run of ≥2 bars of rising energy ending
+  at a drop. A hi-hat lift without bass is not a drop (tested).
+- **Downbeats** now add beat-synchronous timbre novelty (12 log bands): with equal kicks on beats 1
+  and 3, the chord change decides the bar start (tested; fails without the novelty term). Real-track
+  downbeat confidence remains low on flat chiptune (0.01–0.12), so phase errors are still possible.
+- **Editing**: drops are rewarded as cut points, get a zoom-through transition and an impact ramp, and
+  receive the strongest moment (hero placement ranks the drop segment first). Shots inside a build
+  punch in on every beat. The automatic excerpt scores 25% higher when a drop falls 15–75% into it.
+- **Beat correction**: `story['beat_override'] = {bpm, first_downbeat}` (song seconds; CLI story JSON or
+  Creative controls → Tempo / Tap tempo / First downbeat) replaces the measured grid while keeping
+  measured energy/drop marks; reports say `beats (manual grid)`.

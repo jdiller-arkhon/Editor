@@ -2,11 +2,12 @@
 import numpy as np
 
 
-def choose_section(energy, source_duration, output_duration, hop=.05, starts=None):
+def choose_section(energy, source_duration, output_duration, hop=.05, starts=None, drops=None):
     """Prefer an energetic, varying excerpt; this is not musical phrase recognition.
 
     ``starts`` may restrict candidates to measured musical positions (downbeats or
-    phrase starts); otherwise excerpts begin on a one-second grid.
+    phrase starts); otherwise excerpts begin on a one-second grid. Excerpts with a measured
+    ``drops`` entry between 15% and 75% of the way through (build, drop, payoff) score 25% higher.
     """
     if output_duration >= source_duration:
         return 0.0
@@ -28,6 +29,8 @@ def choose_section(energy, source_duration, output_duration, hop=.05, starts=Non
             continue
         attacks = np.maximum(np.diff(excerpt),0)
         score = float(.7*excerpt.mean()+.2*excerpt.std()+.1*(attacks.mean() if len(attacks) else 0))
+        if drops and any(start+.15*output_duration <= d <= start+.75*output_duration for d in drops):
+            score *= 1.25
         scored.append((start,score))
     maximum = max(score for start,score in scored)
     # Preserve earlier musical context when multiple windows score similarly.

@@ -142,3 +142,7 @@
 
 ## 2026-10-02 — Claude strips and cut review (Claude continuation)
 - Moment review now sends one numbered 6-frame strip per candidate; new review-the-cut pass with validated swaps (closing shot included). Tests: request shape (4 strips, 768×288), peak_frame validation, swap validation limits, swap rules (reuse, non-gameplay), applied swaps land inside their shots with total duration preserved, failed review keeps the cut. 42 core tests OK.
+
+## 2026-10-02 — Music structure (Claude continuation)
+- Added bass/timbre measurement, shared `structure()` for bars/phrases, drop/build marks, timbre-novelty downbeats, manual grid override (story/CLI/desktop with tap tempo), drop-aware excerpt choice, drop hero placement and build punch-ins. Found and fixed: cut_mode equality checks would have dropped manual grids from cinematic transitions; tap-tempo reset on non-increasing clock.
+- Tests: 5 new structure tests on decoded synthetic songs (drop vs hat lift, chords-only downbeats, override, excerpt, drop hero/build); drop and timbre terms mutation-checked (first chord test did not isolate timbre and was replaced). 47 core, 11 desktop OK. No ground-truth labels for real music yet.

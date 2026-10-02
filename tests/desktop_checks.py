@@ -71,6 +71,21 @@ class DesktopTests(unittest.TestCase):
             self.assertIn('Added from YouTube',window.status.text())
             window.job=None;window.close()
 
+    def test_tempo_override_and_tap_tempo(self):
+        window=Studio()
+        self.assertNotIn('beat_override',window.story())
+        with patch('time.monotonic',side_effect=[10.0,10.5,11.0,11.5,12.0]):
+            for _ in range(5): window.tap_tempo()
+        self.assertAlmostEqual(window.tempo_override.value(),120.0)
+        window.first_downbeat.setValue(1.25)
+        self.assertEqual(window.story()['beat_override'],dict(bpm=120.0,first_downbeat=1.25))
+        with patch('time.monotonic',side_effect=[0.0,0.25,0.5,0.75]):
+            for _ in range(4): window.tap_tempo()   # 240 BPM taps fold into range
+        self.assertAlmostEqual(window.tempo_override.value(),120.0)
+        window.tempo_override.setValue(0)
+        self.assertNotIn('beat_override',window.story())
+        window.close()
+
     def test_reference_workspace_and_real_analysis(self):
         window=Studio()
         self.assertFalse(window.banner.art.isNull())

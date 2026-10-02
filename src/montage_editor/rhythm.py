@@ -8,8 +8,9 @@ are labelled as such. None of this recognises lyrics, sections or genre.
 """
 import numpy as np
 
-METHOD = ('autocorrelation tempo, dynamic-programming beat tracking, low-band accent '
-          'downbeat phase (assumes 4/4), four-bar grid plus measured bar-energy changes')
+METHOD = ('autocorrelation tempo, dynamic-programming beat tracking, low-band accent plus '
+          'timbre-novelty downbeat phase (assumes 4/4), four-bar grid, measured bar-energy changes '
+          'and bass-entrance drops')
 MINIMUM_CONFIDENCE = .5
 
 
@@ -74,7 +75,67 @@ def track_beats(envelope, period, tightness=100.0):
     return np.asarray(beats[::-1], dtype=int)
 
 
-def beat_grid(onset, low_onset, energy, hop=.01, energy_hop=.05, latency=0.0):
+def _envelope_mean(values, start, end, hop):
+    lo, hi = int(start/hop), max(int(start/hop)+1, int(end/hop))
+    return float(np.mean(values[lo:hi])) if lo < len(values) else 0.0
+
+
+def structure(downbeats, bar_seconds, energy, energy_hop=.05, bass=None, bass_hop=.01):
+    """Bars and phrase marks from a downbeat grid.
+
+    ``grid`` every four bars is an assumption; ``rise``/``fall`` are measured bar-energy
+    changes; ``drop`` is a measured bass entrance (bar bass at least twice the previous two
+    bars and loud overall); ``build`` marks the start of a rising run of bars into a drop.
+    """
+    bars = []
+    for i, start in enumerate(downbeats):
+        end = downbeats[i+1] if i+1 < len(downbeats) else start+bar_seconds
+        bar = dict(start=round(float(start), 4), energy=_envelope_mean(energy, start, end, energy_hop))
+        if bass is not None and len(bass):
+            bar['bass'] = _envelope_mean(bass, start, end, bass_hop)
+        bars.append(bar)
+    phrases = []
+    levels = np.asarray([b['energy'] for b in bars])
+    lows = np.asarray([b.get('bass', 0.0) for b in bars])
+    scale, low_scale = (float(levels.max()) if len(levels) else 0.0), (float(lows.max()) if len(lows) else 0.0)
+
+    def repeated(kind, i):
+        return bool(phrases) and phrases[-1]['bar'] == i-1 and kind in phrases[-1]['kinds']
+    for i, bar in enumerate(bars):
+        kinds = []
+        if i and i % 4 == 0:
+            kinds.append('grid')
+        if i >= 2 and scale > 0:
+            before = float(levels[i-2:i].mean())
+            change = levels[i]-before
+            kind = 'rise' if change > 0 else 'fall'
+            if (abs(change) >= .2*scale and (before <= 0 or not .7 <= levels[i]/before <= 1.4)
+                    and not repeated(kind, i)):
+                kinds.append(kind)
+        if i >= 2 and low_scale > 0:
+            before = float(lows[i-2:i].mean())
+            if lows[i] >= .35*low_scale and lows[i] >= 2*max(before, 1e-12) and not repeated('drop', i):
+                kinds.append('drop')
+        if kinds:
+            phrases.append(dict(time=bar['start'], bar=i, kinds=kinds))
+    # A build is a run of at least two bars of rising energy that ends at a drop.
+    for phrase in [p for p in phrases if 'drop' in p['kinds']]:
+        j = phrase['bar']
+        k = j
+        while k-1 >= 0 and levels[k-1] < levels[k]*1.0001 and j-k < 4:
+            k -= 1
+        if j-k >= 2:
+            existing = next((p for p in phrases if p['bar'] == k), None)
+            if existing:
+                if 'build' not in existing['kinds']:
+                    existing['kinds'].append('build')
+            else:
+                phrases.append(dict(time=bars[k]['start'], bar=k, kinds=['build']))
+    phrases.sort(key=lambda p: p['bar'])
+    return bars, phrases
+
+
+def beat_grid(onset, low_onset, energy, hop=.01, energy_hop=.05, latency=0.0, bass=None, timbre=None):
     """Measure a beat grid; callers must honour ``confidence`` before relying on it."""
     onset = np.asarray(onset, dtype=float)
     low_onset = np.asarray(low_onset, dtype=float)
@@ -104,39 +165,40 @@ def beat_grid(onset, low_onset, energy, hop=.01, energy_hop=.05, latency=0.0):
     times = frames*hop+latency
     accent = np.asarray([_strongest_near(low_onset, f, radius) for f in frames])
     accent = accent/(accent.max() or 1)+.25*at_beats/(at_beats.max() or 1)
+    if timbre is not None and len(timbre) > frames[-1]:
+        # Chords and arrangement tend to change on downbeats: beat-synchronous timbre novelty.
+        timbre = np.asarray(timbre, dtype=float)
+        bounds = list(frames)+[min(len(timbre), frames[-1]+int(round(period)))]
+        means = np.asarray([timbre[a:max(a+1, b)].mean(axis=0) for a, b in zip(bounds[:-1], bounds[1:])])
+        novelty = np.r_[0.0, np.linalg.norm(np.diff(means, axis=0), axis=1)]
+        accent = accent+.6*novelty/(novelty.max() or 1)
     phase_strength = [float(accent[p::4].mean()) for p in range(4)]
     ranked = sorted(phase_strength, reverse=True)
     phase = int(np.argmax(phase_strength))
     downbeat_confidence = float((ranked[0]-ranked[1])/ranked[0]) if ranked[0] > 0 else 0.0
     downbeats = times[phase::4]
-    bars = []
-    for i, start in enumerate(downbeats):
-        end = downbeats[i+1] if i+1 < len(downbeats) else start+4*slope*hop
-        lo, hi = int(start/energy_hop), max(int(start/energy_hop)+1, int(end/energy_hop))
-        level = float(energy[lo:hi].mean()) if lo < len(energy) else 0.0
-        bars.append(dict(start=round(float(start), 4), energy=level))
-    phrases = []
-    levels = np.asarray([b['energy'] for b in bars])
-    scale = float(levels.max()) if len(levels) else 0.0
-    for i, bar in enumerate(bars):
-        kinds = []
-        if i and i % 4 == 0:
-            kinds.append('grid')
-        if i >= 2 and scale > 0:
-            before = float(levels[i-2:i].mean())
-            change = levels[i]-before
-            kind = 'rise' if change > 0 else 'fall'
-            repeated = phrases and phrases[-1]['bar'] == i-1 and kind in phrases[-1]['kinds']
-            if (abs(change) >= .2*scale and (before <= 0 or not .7 <= levels[i]/before <= 1.4)
-                    and not repeated):
-                kinds.append(kind)
-        if kinds:
-            phrases.append(dict(time=bar['start'], bar=i, kinds=kinds))
+    bars, phrases = structure(downbeats, 4*slope*hop, energy, energy_hop, bass, hop)
     return dict(tempo_bpm=round(float(tempo), 2), beats=[round(float(t), 4) for t in times],
                 downbeats=[round(float(t), 4) for t in downbeats], bars=bars, phrases=phrases,
                 confidence=round(confidence, 3), periodicity=round(periodicity, 3),
                 beat_alignment=round(alignment, 3), steadiness=round(steadiness, 3),
                 downbeat_confidence=round(downbeat_confidence, 3), method=METHOD)
+
+
+def manual_grid(bpm, first_downbeat, duration, energy, energy_hop=.05, bass=None, bass_hop=.01):
+    """User-corrected grid: ``first_downbeat`` is in analysis time (may be negative)."""
+    if not (isinstance(bpm, (int, float)) and 40 <= bpm <= 240):
+        raise ValueError('Tempo override must be between 40 and 240 BPM')
+    period = 60/float(bpm)
+    first = float(first_downbeat) % (4*period)
+    beats = np.arange(first-4*period, duration+1e-9, period)
+    beats = beats[beats >= 0]
+    downbeats = np.arange(first, duration+1e-9, 4*period)
+    bars, phrases = structure(downbeats, 4*period, np.asarray(energy, float), energy_hop, bass, bass_hop)
+    return dict(tempo_bpm=round(float(bpm), 2), beats=[round(float(t), 4) for t in beats],
+                downbeats=[round(float(t), 4) for t in downbeats], bars=bars, phrases=phrases,
+                confidence=1.0, periodicity=None, beat_alignment=None, steadiness=None,
+                downbeat_confidence=None, method='manual tempo and downbeat override (user-corrected)')
 
 
 def smoothed_energy(energy, hop):
@@ -204,7 +266,8 @@ def plan_cuts(music, settings, duration):
     reward = [0.0]
     for t in times[1:-1]:
         kinds = kinds_at(t)
-        reward.append((.35 if near(downbeats, t) else 0)+(.8+(.4 if 'rise' in kinds else 0) if kinds else 0))
+        reward.append((.35 if near(downbeats, t) else 0)+(.8+(.4 if 'rise' in kinds or 'drop' in kinds else 0)
+                                                         if kinds else 0))
     reward.append(.5)
     best, back = [-np.inf]*len(times), [-1]*len(times)
     best[0] = 0.0
@@ -285,7 +348,7 @@ def boundary_styles(timeline, music):
         position += clip.duration
         kinds = next((p['kinds'] for p in music.get('phrases', [])
                       if abs(p['time']-position) <= tolerance), [])
-        if 'rise' in kinds:
+        if 'rise' in kinds or 'drop' in kinds:
             styles.append('zoomin')
         elif 'fall' in kinds:
             styles.append('fade')

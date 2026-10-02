@@ -1,5 +1,6 @@
 """Desktop workspace connected to the real local montage engine."""
 import json
+import numpy as np
 from pathlib import Path
 import sys
 from datetime import datetime
@@ -368,6 +369,18 @@ class Studio(QMainWindow):
         form.addRow(self.auto_music_section)
         self.fps = QSpinBox(); self.fps.setRange(1,120); self.fps.setValue(30)
         form.addRow('Frames / second',self.fps)
+        self.tempo_override=QDoubleSpinBox();self.tempo_override.setRange(0,240);self.tempo_override.setDecimals(1)
+        self.tempo_override.setSpecialValueText('Automatic (measured)');self.tempo_override.setSuffix(' BPM')
+        self.tempo_override.setToolTip('Correct the beat grid if the measured tempo is wrong. 0 = automatic.')
+        tap_row=QHBoxLayout();tap_row.addWidget(self.tempo_override,1)
+        self.tap_button=QPushButton('Tap tempo');self.tap_button.setToolTip('Tap along with the beat (4+ taps)')
+        self.tap_button.clicked.connect(self.tap_tempo);tap_row.addWidget(self.tap_button)
+        tap_widget=QWidget();tap_widget.setObjectName('step');tap_widget.setLayout(tap_row);tap_row.setContentsMargins(0,0,0,0)
+        form.addRow('Tempo',tap_widget)
+        self.first_downbeat=QDoubleSpinBox();self.first_downbeat.setRange(0,3600);self.first_downbeat.setDecimals(2)
+        self.first_downbeat.setSuffix(' s');self.first_downbeat.setToolTip('Song time of any bar start (beat 1). Used with a tempo override.')
+        form.addRow('First downbeat',self.first_downbeat)
+        self.taps=[]
         form_widget=QWidget();form_widget.setLayout(form);form_widget.setMinimumHeight(350)
         right.addWidget(form_widget)
         right.addStretch()
@@ -580,8 +593,25 @@ class Studio(QMainWindow):
             values=[self.dialogue.item(row,i).text() for i in range(6)]
             cues.append(dict(source=values[0],at=float(values[1]),start=float(values[2]),duration=float(values[3]),
                              reference=values[4],text_kind=values[5]))
-        return dict(dialogue=cues,transition=self.transition.currentData(),transition_duration=self.fade.value(),
-                    faith_message=self.closing_line.text().strip())
+        story=dict(dialogue=cues,transition=self.transition.currentData(),transition_duration=self.fade.value(),
+                   faith_message=self.closing_line.text().strip())
+        if self.tempo_override.value()>=40:
+            story['beat_override']=dict(bpm=self.tempo_override.value(),first_downbeat=self.first_downbeat.value())
+        return story
+
+    def tap_tempo(self):
+        import time
+        now=time.monotonic()
+        if self.taps and not 0<now-self.taps[-1]<=2.0:self.taps=[]
+        self.taps=(self.taps+[now])[-12:]
+        if len(self.taps)>=4:
+            bpm=60/float(np.median(np.diff(self.taps)))
+            while bpm<70:bpm*=2
+            while bpm>180:bpm/=2
+            self.tempo_override.setValue(round(bpm,1))
+            self.status.setText(f'Tapped tempo • {bpm:.1f} BPM (set First downbeat to a bar start in the song)')
+        else:
+            self.status.setText(f'Keep tapping… {len(self.taps)}/4')
 
     def show_timeline(self,timeline):
         self.timeline_table.show();self.timeline_table.setMaximumHeight(120)
