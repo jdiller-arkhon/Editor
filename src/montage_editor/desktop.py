@@ -364,6 +364,19 @@ class Studio(QMainWindow):
         for title,key in [('High quality','high'),('Master quality • larger files','master'),('Draft • fast preview','draft')]:
             self.quality.addItem(title,key)
         form.addRow('Render quality',self.quality)
+        self.look=QComboBox()
+        for title,key in [('Clean • subtle contrast','clean'),('Punchy • vivid','punchy'),
+                          ('Cinematic • warm/cool balance','cinematic'),('Monochrome','mono'),('Original colour','none')]:
+            self.look.addItem(title,key)
+        form.addRow('Look',self.look)
+        self.slowmo=QComboBox()
+        for title,key in [('Smooth (motion interpolation)','motion'),('Blended frames • faster','blend'),('Held frames • fastest','none')]:
+            self.slowmo.addItem(title,key)
+        form.addRow('Slow motion',self.slowmo)
+        self.motion_blur=QCheckBox('Motion blur on speed ramps');self.motion_blur.setChecked(True)
+        form.addRow(self.motion_blur)
+        self.sfx=QCheckBox('Transition swishes (quiet, on push/zoom blends)');self.sfx.setChecked(True)
+        form.addRow(self.sfx)
         self.auto_music_section = QCheckBox('Choose an energetic section of my song')
         self.auto_music_section.setChecked(True)
         form.addRow(self.auto_music_section)
@@ -594,7 +607,9 @@ class Studio(QMainWindow):
             cues.append(dict(source=values[0],at=float(values[1]),start=float(values[2]),duration=float(values[3]),
                              reference=values[4],text_kind=values[5]))
         story=dict(dialogue=cues,transition=self.transition.currentData(),transition_duration=self.fade.value(),
-                   faith_message=self.closing_line.text().strip())
+                   faith_message=self.closing_line.text().strip(),look=self.look.currentData(),
+                   interpolation=self.slowmo.currentData(),motion_blur=self.motion_blur.isChecked(),
+                   sfx='swish' if self.sfx.isChecked() else 'none',reframe='auto')
         if self.tempo_override.value()>=40:
             story['beat_override']=dict(bpm=self.tempo_override.value(),first_downbeat=self.first_downbeat.value())
         return story

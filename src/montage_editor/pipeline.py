@@ -16,6 +16,7 @@ from .editing import PROFILES, retime_filters, source_offset
 from .transitions import BLENDS, EFFECTS, LOSSLESS, compose
 from .music_sections import choose_section
 from . import screen_analysis as screens
+from . import craft
 from .rhythm import alignment_report, beat_grid, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
@@ -209,6 +210,12 @@ class Timeline:
     music_start: float = 0
     # Per-cut transition overrides ('cut' or an EFFECTS name); empty applies ``transition``.
     boundary_transitions: list = field(default_factory=list)
+    # Finishing (defaults keep older projects rendering exactly as before).
+    interpolation: str = 'none'
+    look: str = 'none'
+    motion_blur: bool = False
+    reframe: str = 'fit'
+    sfx: str = 'none'
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -224,6 +231,10 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
+        if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
+                not isinstance(self.motion_blur, bool) or self.reframe not in craft.REFRAME or
+                self.sfx not in craft.SFX):
+            raise ValueError('Unsupported finishing option')
         if self.boundary_transitions:
             if len(self.boundary_transitions)!=len(self.clips)-1 or not all(
                     b=='cut' or b in EFFECTS for b in self.boundary_transitions):
@@ -299,6 +310,9 @@ def _beat_segments(music, settings, duration, cinematic):
         lifted = 'rise' in starts or 'drop' in starts or ('grid' in starts and tags['energy'] >= .5)
         profile = 'ramp' if (cinematic and lifted and not previous_impact and length >= 1) else 'normal'
         previous_impact = profile == 'ramp'
+        if profile == 'ramp':
+            # The ramp is slowest at mid-shot: put the moment there, not on an off-centre beat.
+            tags = dict(tags, anchor=length/2)
         # Punch in on interior downbeats of loud, real-time shots; the ramp carries its own feel.
         accents = []
         if cinematic and profile == 'normal' and building:
@@ -535,9 +549,26 @@ def render(timeline, output):
             media=probe(clip.source)
             has_audio=any(s['codec_type']=='audio' for s in media['streams'])
             graph=retime_filters(clip.duration,clip.speed_profile,has_audio)
+            stream=next(s for s in media['streams'] if s['codec_type']=='video')
+            numerator,denominator=(stream.get('avg_frame_rate') or stream.get('r_frame_rate') or '30/1').split('/')
+            source_fps=float(numerator)/float(denominator or 1) if float(denominator or 1) else 30.0
+            before=[]
+            if timeline.reframe=='follow' and settings.width/settings.height < .8*stream['width']/stream['height']:
+                crop_width=max(2,round(stream['height']*settings.width/settings.height/2)*2)
+                before.append(craft.follow_crop(craft.follow_track(clip.source,clip.start,clip.duration),crop_width))
+            if clip.speed_profile!='normal':
+                before.append(craft.interpolation_filter(timeline.interpolation,source_fps,settings.fps,
+                                                         settings.width,settings.height))
+            chain=','.join(f for f in before if f)
+            if chain:
+                graph=[f'[0:v]{chain}[src]']+[g.replace('[0:v]','[src]') for g in graph]
+            look=craft.LOOKS[timeline.look]
+            blur=craft.motion_blur_filter() if timeline.motion_blur and clip.speed_profile!='normal' else ''
             video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,'
                           f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
-                          f'fps={settings.fps},tpad=stop_mode=clone:stop_duration=0.2,trim=duration={clip.duration}')
+                          +(look+',' if look else '')+
+                          f'fps={settings.fps},'+(blur+',' if blur else '')+
+                          f'tpad=stop_mode=clone:stop_duration=0.2,trim=duration={clip.duration}')
             if timeline.transition=='zoom':
                 frames=clip.duration*settings.fps
                 decay=max(1,min(timeline.transition_duration,clip.duration/2)*settings.fps/2)
@@ -583,6 +614,9 @@ def render(timeline, output):
                            f'apad,atrim=duration={duration},asplit=2[voice_mix][sidechain]')
             filters.append('[music][sidechain]sidechaincompress=threshold=0.025:ratio=6:attack=15:release=250[bed]')
             labels=['[bed]','[game]','[voice_mix]']
+        if timeline.sfx=='swish' and boundaries:
+            extra,sfx_filters,sfx_labels=craft.swish_inputs(boundaries,2+len(timeline.dialogue))
+            inputs+=extra; filters+=sfx_filters; labels+=sfx_labels
         filters.append(''.join(labels)+f'amix=inputs={len(labels)}:duration=first:normalize=0[mixed]')
         mastering = ''
         if timeline.normalize_audio:
@@ -612,6 +646,10 @@ def render(timeline, output):
         report['audio_mastering'] = 'measured two-pass loudnorm' if timeline.normalize_audio else 'peak limiter'
         report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips} |
                                         ({'beat_punch'} if any(c.accents for c in timeline.clips) else set()))
+        report['finishing'] = dict(interpolation=timeline.interpolation, look=timeline.look,
+                                   motion_blur=timeline.motion_blur, reframe=timeline.reframe, sfx=timeline.sfx,
+                                   sfx_count=sum(b.get('effect') in craft.SWISH_EFFECTS for b in boundaries)
+                                   if timeline.sfx=='swish' else 0)
         report['music_start'] = timeline.music_start
         report['transition'] = timeline.transition
         report['transition_boundaries'] = boundaries
@@ -697,7 +735,11 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            transition=story.get('transition', timeline.transition) if not ai_model else timeline.transition,
                            transition_duration=story.get('transition_duration', timeline.transition_duration) if not ai_model else timeline.transition_duration,
                            faith_message=story.get('faith_message',''),gameplay_gain=story.get('gameplay_gain',0),
-                           music_gain=story.get('music_gain',1),normalize_audio=story.get('normalize_audio',False))
+                           music_gain=story.get('music_gain',1),normalize_audio=story.get('normalize_audio',False),
+                           interpolation=story.get('interpolation','none'),look=story.get('look','none'),
+                           motion_blur=bool(story.get('motion_blur',False)),sfx=story.get('sfx','none'),
+                           reframe=('follow' if settings.height>settings.width else 'fit')
+                                   if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
     report = render(timeline, output)

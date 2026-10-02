@@ -129,3 +129,23 @@ before claiming professional artistic quality. Generated test patterns test mech
 - **Beat correction**: `story['beat_override'] = {bpm, first_downbeat}` (song seconds; CLI story JSON or
   Creative controls → Tempo / Tap tempo / First downbeat) replaces the measured grid while keeping
   measured energy/drop marks; reports say `beats (manual grid)`.
+
+
+### Finishing (implemented; Timeline fields default off for old projects)
+
+- `interpolation` (`none`/`blend`/`motion`): ramp/impact shots from sources under ~2× the output frame
+  rate are interpolated at delivery size before retiming (`minterpolate` mci/aobmc, or `framerate`
+  blending). Measured: held frames in the 0.5× section of a 15 fps source fell by more than 3×.
+  Motion interpolation can warp HUD text and fast edges; it is CPU-heavy (shots are short).
+- `look`: `clean`, `punchy`, `cinematic`, `mono` or `none` — fixed FFmpeg eq/colorbalance presets, not
+  calibrated grading.
+- `motion_blur`: a 1-2-1 three-frame blend on ramp shots (simulated shutter).
+- `reframe='follow'` for outputs much narrower than the source (e.g. 9:16): the crop follows the
+  smoothed horizontal centre of frame-difference motion, with a dead zone and a camera-motion guard
+  so first-person footage stays centred; otherwise the crop is centred. `auto` (desktop default)
+  follows for portrait outputs; `fit` letterboxes as before.
+- `sfx='swish'`: quiet CC0 swishes (artisticdude, OpenGameArt) on push/zoom/blur blends only, never on
+  hard cuts or dissolves. No impact sounds are bundled.
+- Ramp shots now anchor their moment at mid-shot, where the speed curve is slowest.
+- Desktop quick-create: clean look, motion interpolation, motion blur, swishes, auto reframe; all
+  adjustable in Creative controls.

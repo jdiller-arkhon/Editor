@@ -146,3 +146,6 @@
 ## 2026-10-02 — Music structure (Claude continuation)
 - Added bass/timbre measurement, shared `structure()` for bars/phrases, drop/build marks, timbre-novelty downbeats, manual grid override (story/CLI/desktop with tap tempo), drop-aware excerpt choice, drop hero placement and build punch-ins. Found and fixed: cut_mode equality checks would have dropped manual grids from cinematic transitions; tap-tempo reset on non-increasing clock.
 - Tests: 5 new structure tests on decoded synthetic songs (drop vs hat lift, chords-only downbeats, override, excerpt, drop hero/build); drop and timbre terms mutation-checked (first chord test did not isolate timbre and was replaced). 47 core, 11 desktop OK. No ground-truth labels for real music yet.
+
+## 2026-10-02 — Finishing (Claude continuation)
+- Added craft.py and Timeline finishing fields; desktop controls; bundled 4 CC0 swishes (~24 KB). Tests on rendered output: interpolation held-frame reduction, look saturation/monochrome, blur softening, follow-crop keeps an off-centre subject visible with no letterbox (mutation-checked: a centred crop fails), swish present on a push and absent on a hard cut. First test footage was flawed (saturated testsrc2, drawbox that cannot animate) and was corrected. 51 core, 11 desktop OK.

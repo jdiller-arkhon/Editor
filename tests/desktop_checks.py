@@ -131,6 +131,8 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(window.create_button.text(),'Creating your montage…')
             self.assertTrue(story['auto_music_section'])
             self.assertTrue(story['normalize_audio'])
+            self.assertEqual((story['look'],story['interpolation'],story['motion_blur'],story['sfx'],story['reframe']),
+                             ('clean','motion',True,'swish','auto'))
         window.job=None
         window.close()
 

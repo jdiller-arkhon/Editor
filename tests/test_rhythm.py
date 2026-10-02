@@ -141,7 +141,12 @@ class BeatDirectorTests(unittest.TestCase):
         anchored = [c for c in timeline.clips if c.anchor_output is not None]
         self.assertTrue(anchored)
         for clip, start in zip(timeline.clips, starts):
-            if clip.anchor_output is not None:
+            if clip.anchor_output is None:
+                continue
+            if clip.speed_profile == 'ramp':
+                # Ramps are slowest at mid-shot, so the moment is anchored there.
+                self.assertAlmostEqual(clip.anchor_output, clip.duration/2)
+            else:
                 self.assertLess(min(abs(start+clip.anchor_output-b) for b in music['beats']), 1e-6)
 
     def test_strongest_moments_land_on_the_loudest_music(self):
