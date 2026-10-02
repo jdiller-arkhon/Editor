@@ -24,6 +24,10 @@ import numpy as np
 LOG = logging.getLogger(__name__)
 
 MODEL = 'claude-opus-5-5'
+DIRECTOR_MODEL = 'claude-fable-5-1'   # Anthropic's most capable model, for full edit direction
+MODELS = {'claude-fable-5-1': 'Claude Fable 5.1 • most capable', 'claude-opus-5-5': 'Claude Opus 5.5 • faster, lower cost'}
+TREATMENTS = ('straight', 'ramp', 'punch')
+TRANSITIONS_OUT = ('cut', 'push_left', 'push_right', 'zoom', 'blur', 'dissolve')
 FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 EVENTS = ('elimination', 'multi_elimination', 'clutch', 'objective', 'outplay', 'movement',
           'cinematic', 'setup', 'death', 'menu_or_loading', 'other')
@@ -67,6 +71,36 @@ REVIEW_SCHEMA = {
     'additionalProperties': False,
 }
 MAX_SWAPS = 4
+
+DIRECT_SCHEMA = {
+    'type': 'object',
+    'properties': {
+        'slots': {'type': 'array', 'items': {
+            'type': 'object',
+            'properties': {'slot': {'type': 'integer'}, 'moment': {'type': 'integer'},
+                           'treatment': {'type': 'string', 'enum': list(TREATMENTS)},
+                           'transition_out': {'type': 'string', 'enum': list(TRANSITIONS_OUT)}},
+            'required': ['slot', 'moment', 'treatment', 'transition_out'], 'additionalProperties': False}},
+        'arc': {'type': 'string'},
+    },
+    'required': ['slots', 'arc'],
+    'additionalProperties': False,
+}
+
+DIRECT_SYSTEM = (
+    'You are the director of a top-tier gaming montage. The cut points are fixed to the music: the text '
+    'lists every slot S1..Sn with its time, length in beats, intensity 0-1 and musical marks (build, '
+    'drop, rise, phrase). The image shows candidate moments M0..Mm at their key frame; the text gives '
+    'each one\'s judged highlight score, event and note. Assign one distinct moment to each slot and '
+    'choose a treatment and the transition out of the slot. Craft rules of top editors: open with a '
+    'strong, readable moment; build intensity; put the biggest moment on the drop or the most intense '
+    'slot; treatment "ramp" (slow motion through the hit) only on 1 s+ slots that land a decisive '
+    'moment, sparingly, never twice in a row; "punch" (beat punch-ins) for energetic slots and builds; '
+    '"straight" otherwise. Mostly hard cuts on beats; reserve push/zoom transitions for phrase changes, '
+    'drops and lifts, dissolve for the calm ending; "blur" rarely. Avoid placing near-identical views '
+    'next to each other. End on a calm, clean shot that suits a closing line. Never invent slot or '
+    'moment numbers. "arc": one sentence describing the story of the edit.'
+)
 
 REVIEW_SYSTEM = (
     'You are the senior editor reviewing a gaming montage cut before render. Image 1 shows each '
@@ -163,7 +197,7 @@ def review_pool(candidates, limit):
 
 def validate_review(review, count):
     if not isinstance(review, dict) or not isinstance(review.get('moments'), list):
-        raise ValueError('Claude review has no moments')
+        raise ValueError('AI review has no moments')
     moments, seen = {}, set()
     for moment in review['moments']:
         try:
@@ -177,11 +211,11 @@ def validate_review(review, count):
         except (KeyError, TypeError):
             valid = False
         if not valid:
-            raise ValueError('Claude review contains an invalid or unknown moment')
+            raise ValueError('AI review contains an invalid or unknown moment')
         seen.add(ident)
         moments[ident] = dict(moment, note=moment['note'][:200])
     if not moments:
-        raise ValueError('Claude review judged no moments')
+        raise ValueError('AI review judged no moments')
     sequence = []
     for ident in review.get('sequence', []):
         if isinstance(ident, int) and ident in moments and moments[ident]['usable'] and ident not in sequence:
@@ -190,7 +224,7 @@ def validate_review(review, count):
     return moments, sequence, rationale
 
 
-def apply_review(candidates, pool, moments, sequence):
+def apply_review(candidates, pool, moments, sequence, judge='claude vision review', weight=1.0):
     """Re-score reviewed moments, quarantine unusable footage, de-emphasise unreviewed ones."""
     reviewed = {(c['source'], c['time']): i for i, c in enumerate(pool)}
     order = {ident: rank for rank, ident in enumerate(sequence)}
@@ -203,8 +237,10 @@ def apply_review(candidates, pool, moments, sequence):
         moment = moments[index]
         time = min(frame_time(candidate['time'], candidate['source_duration'], moment['peak_frame']),
                    candidate['source_duration'])
-        entry = dict(candidate, time=time, score=moment['highlight']/10, event=moment['event'],
-                     ai_note=moment['note'], judged_by='claude vision review',
+        # weight < 1 keeps part of the measured activity score (for less reliable judges).
+        entry = dict(candidate, time=time, score=weight*moment['highlight']/10+(1-weight)*candidate['score'],
+                     event=moment['event'],
+                     ai_note=moment['note'], judged_by=judge,
                      activity_score=candidate['score'])
         if not moment['usable'] or moment['event'] == 'menu_or_loading':
             # Excluded spans are pre-reserved so no clip, not even a fallback fill, covers them.
@@ -217,9 +253,12 @@ def apply_review(candidates, pool, moments, sequence):
 
 class ClaudeDirector:
     """Opt-in: frames of the user's footage are sent to Anthropic's API."""
+    label = 'Claude'
 
-    def __init__(self, model=MODEL, client=None, effort='high', limit=24):
+    def __init__(self, model=MODEL, client=None, effort='high', limit=24, director_model=DIRECTOR_MODEL,
+                 direct_edit=True):
         self.model, self.effort, self.limit = model, effort, limit
+        self.director_model, self.direct_edit = director_model, direct_edit
         self._client = client
 
     @property
@@ -351,6 +390,31 @@ class ClaudeDirector:
                             notes=str(review.get('notes', ''))[:1000], usage=self._usage(response))
 
 
+    def plan_edit(self, timeline, candidates, music, brief=''):
+        """Claude directs the whole edit on the fixed beat slots; the engine executes and checks it."""
+        from .pipeline import apply_plan
+        pool = sorted((c for c in candidates if not c.get('exclude')), key=lambda c: (-c['score'], c['source'], c['time']))
+        pool = pool[:min(40, max(len(timeline.clips)*2, 12))]
+        if len(pool) < 2:
+            return timeline, dict(applied=[], notes='too few moments to direct')
+        frames = [labelled_frame(c['source'], c['time'], f'M{j}') for j, c in enumerate(pool)]
+        moment_lines = [f'M{j}: score {c["score"]:.2f}' + (f', {c["event"]}' if c.get('event') else '')
+                        + (f' - {c["ai_note"]}' if c.get('ai_note') else '') for j, c in enumerate(pool)]
+        content = [{'type': 'text', 'text': f'Creative brief: {brief[:2000] or "none"}\nTempo: '
+                    f'{music.get("tempo_bpm") or "unknown"} BPM\nSlots:\n' + '\n'.join(_slot_lines(timeline, music))
+                    + '\nMoments:\n' + '\n'.join(moment_lines)},
+                   image_block(tile(frames, 6))]
+        model = self.director_model
+        request = dict(self._request(DIRECT_SYSTEM, DIRECT_SCHEMA, content), model=model)
+        plan, response = self._call(request, 'edit direction')
+        assignments, arc = validate_direction(plan, len(timeline.clips), len(pool))
+        excluded = [c for c in candidates if c.get('exclude')]
+        result, applied, notes = apply_plan(timeline, [(s, pool[m], t, o) for s, m, t, o in assignments], music, excluded)
+        return result, dict(model=getattr(response, 'model', model), arc=arc, slots=len(timeline.clips),
+                            planned=len(assignments), applied=[a+1 for a in applied], notes=notes,
+                            treatments={t: sum(x[2] == t for x in assignments) for t in TREATMENTS},
+                            usage=self._usage(response))
+
 def validate_swaps(review, shots, alternates):
     if not isinstance(review, dict) or not isinstance(review.get('swaps'), list):
         raise ValueError('Claude cut review has no swaps list')
@@ -370,3 +434,194 @@ def validate_swaps(review, shots, alternates):
     if len(result) > MAX_SWAPS:
         raise ValueError('Claude cut review proposed too many swaps')
     return result
+
+
+def validate_direction(plan, slots, moments):
+    if not isinstance(plan, dict) or not isinstance(plan.get('slots'), list):
+        raise ValueError('Claude edit plan has no slots')
+    result, seen_slots, seen_moments = [], set(), set()
+    for entry in plan['slots']:
+        try:
+            slot, moment = entry['slot'], entry['moment']
+            valid = (all(isinstance(v, int) and not isinstance(v, bool) for v in (slot, moment)) and
+                     1 <= slot <= slots and 0 <= moment < moments and slot not in seen_slots and
+                     moment not in seen_moments and entry['treatment'] in TREATMENTS and
+                     entry['transition_out'] in TRANSITIONS_OUT)
+        except (KeyError, TypeError):
+            valid = False
+        if not valid:
+            raise ValueError('Claude edit plan contains an invalid, duplicate or unknown entry')
+        seen_slots.add(slot); seen_moments.add(moment)
+        result.append((slot-1, moment, entry['treatment'], entry['transition_out']))
+    ramps = sorted(slot for slot, _, treatment, _ in result if treatment == 'ramp')
+    if any(b == a+1 for a, b in zip(ramps, ramps[1:])):
+        # The prompt forbids back-to-back slow motion; keep the first of each run.
+        drop = {b for a, b in zip(ramps, ramps[1:]) if b == a+1}
+        result = [(s, m, 'straight' if s in drop else t, o) for s, m, t, o in result]
+    return result, str(plan.get('arc', ''))[:400]
+
+
+def _slot_lines(timeline, music):
+    energy = np.asarray(music.get('energy', []), dtype=float)
+    hop = music.get('hop_seconds', .05)
+    scale = (float(np.quantile(energy, .05)), float(np.quantile(energy, .95))) if len(energy) else (0, 1)
+    phrases = [(p['time'], p['kinds']) for p in music.get('phrases', [])]
+    period = 60/music['tempo_bpm'] if music.get('tempo_bpm') else None
+    lines, position = [], 0.0
+    for i, clip in enumerate(timeline.clips):
+        window = energy[int(position/hop):int((position+clip.duration)/hop)+1]
+        level = float(np.clip((window.mean()-scale[0])/max(scale[1]-scale[0], 1e-9), 0, 1)) if len(window) else .5
+        marks = sorted({k for t, kinds in phrases if position-.05 <= t < position+clip.duration-.05 for k in kinds})
+        beats = f', {clip.duration/period:.0f} beats' if period else ''
+        lines.append(f'S{i+1}: {position:.2f}-{position+clip.duration:.2f}s ({clip.duration:.2f}s{beats}), '
+                     f'intensity {level:.2f}' + (f', marks {"/".join(marks)}' if marks else '')
+                     + (', FINAL (closing line)' if i == len(timeline.clips)-1 else ''))
+        position += clip.duration
+    return lines
+
+
+# ---------------------------------------------------------------------------------------
+# Local director: the same prompts, schemas, validation and edit execution, served by a
+# vision model running in Ollama on this machine. Footage never leaves the computer.
+
+LOCAL_MODEL = 'qwen2.5vl:7b'
+LOCAL_HOST = 'http://127.0.0.1:11434'
+# Share of a reviewed moment's score taken from the local model; the rest stays the measured
+# activity score. Measured on Xonotic strips (CPU, Q4): qwen2.5vl:7b labelled a death screen
+# correctly but called a real fight "movement" with highlight 0, so it does not get the last word.
+LOCAL_WEIGHT = .6
+
+
+def _local_schema(schema):
+    """Small local models answer better when asked to describe before they judge."""
+    local = json.loads(json.dumps(schema))
+    items = local['properties'].get('moments', {}).get('items')
+    if items:
+        items['properties'] = dict(observations={'type': 'string'}, **items['properties'])
+        items['required'] = ['observations']+items['required']
+    return local
+
+
+class LocalDirector(ClaudeDirector):
+    """Vision director backed by a local Ollama model (loopback only, no proxy, no redirects)."""
+    label = 'Local AI'
+
+    def __init__(self, model=LOCAL_MODEL, host=LOCAL_HOST, timeout=900, batch=4, num_ctx=8192, weight=LOCAL_WEIGHT,
+                 limit=16, **options):
+        from urllib.parse import urlparse
+        parsed = urlparse(host)
+        if parsed.scheme != 'http' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1'):
+            raise ValueError('The local AI director only talks to Ollama on this computer')
+        super().__init__(model=model, client=None, director_model=model, limit=limit, **options)
+        self.host, self.timeout, self.batch, self.num_ctx = host.rstrip('/'), timeout, batch, num_ctx
+        self.weight = weight
+
+    def request(self, pool, brief):
+        """As for Claude, but the schema pins one judgement per strip (small models otherwise skip them)."""
+        request = super().request(pool, brief)
+        moments = request['schema']['properties']['moments']
+        moments.update(minItems=len(pool), maxItems=len(pool))
+        moments['items']['properties']['id'] = {'type': 'integer', 'enum': list(range(len(pool)))}
+        moments['items']['properties']['highlight'].update(minimum=0, maximum=10)
+        moments['items']['properties']['peak_frame'].update(minimum=1, maximum=STRIP_FRAMES)
+        return request
+
+    def _request(self, system, schema, content):
+        texts = [b['text'] for b in content if b['type'] == 'text']
+        images = [b['source']['data'] for b in content if b['type'] == 'image']
+        return dict(model=self.model, system=system, schema=_local_schema(schema), text='\n'.join(texts), images=images)
+
+    def _call(self, request, what):
+        from urllib.error import URLError
+        from urllib.request import ProxyHandler, Request, build_opener
+        from .ai_director import NoRedirect
+        payload = {'model': request['model'], 'stream': False, 'format': request['schema'],
+                   'options': {'temperature': .1, 'num_ctx': self.num_ctx},
+                   'messages': [{'role': 'system', 'content': request['system']},
+                                {'role': 'user', 'content': request['text'], 'images': request['images']}]}
+        call = Request(self.host+'/api/chat', data=json.dumps(payload).encode(),
+                       headers={'Content-Type': 'application/json'})
+
+        def send():
+            with build_opener(ProxyHandler({}), NoRedirect()).open(call, timeout=self.timeout) as reply:
+                return json.load(reply)
+        try:
+            body = _cancellable(send)
+        except URLError as error:
+            raise ValueError('The local AI director needs Ollama running on this computer '
+                             f'({self.host}); start Ollama or choose another director') from error
+        except (TimeoutError, OSError) as error:
+            raise ValueError(f'The local model did not answer the {what} in time') from error
+        except json.JSONDecodeError as error:
+            raise ValueError(f'Ollama returned an unreadable reply to the {what}') from error
+        if body.get('error'):
+            raise ValueError(f'Ollama could not run the {what}: {str(body["error"])[:200]}')
+        if body.get('done_reason') == 'length':
+            raise ValueError(f'The local {what} was cut off before completing')
+        try:
+            return json.loads(body['message']['content']), _LocalResponse(body, request['model'])
+        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            raise ValueError(f'The local {what} was not valid JSON') from error
+
+    @staticmethod
+    def _usage(response):
+        return getattr(response, 'usage', None)
+
+    def review(self, candidates, brief=''):
+        """Judge moments in small batches (local models handle few images per prompt best)."""
+        pool = review_pool(candidates, self.limit)
+        if not pool:
+            raise ValueError('No candidate moments to review')
+        moments, seconds = {}, 0.0
+        for offset in range(0, len(pool), self.batch):
+            chunk = pool[offset:offset+self.batch]
+            LOG.info('Local review of moments %d-%d with %s', offset+1, offset+len(chunk), self.model)
+            jobs.report(offset/len(pool), f'Local AI is watching moments {offset+1}-{offset+len(chunk)} of {len(pool)}')
+            for attempt in (1, 2):   # small local models occasionally return an incomplete answer
+                review, response = self._call(self.request(chunk, brief), 'moment review')
+                seconds += response.seconds
+                try:
+                    local, _, _ = validate_review(review, len(chunk))
+                    break
+                except ValueError:
+                    if attempt == 2:
+                        raise
+            moments.update({offset+i: m for i, m in local.items()})
+        report = dict(provider='ollama (local)', model=self.model, reviewed=len(pool), images_sent=len(pool),
+                      frames_per_image=STRIP_FRAMES, seconds=round(seconds, 1),
+                      usable=sum(m['usable'] for m in moments.values()),
+                      events={e: sum(m['event'] == e for m in moments.values()) for e in EVENTS
+                              if any(m['event'] == e for m in moments.values())},
+                      weight=self.weight,
+                      evidence='six-frame strips judged by a local vision model, blended with measured activity; '
+                               'timing remains measured locally')
+        return apply_review(candidates, pool, moments, [], judge=f'local vision review ({self.model})',
+                            weight=self.weight), report
+
+
+def _cancellable(work, poll=.2):
+    """Run a blocking local-model request while honouring the job's cancel button."""
+    import threading
+    outcome = {}
+
+    def target():
+        try:
+            outcome['value'] = work()
+        except BaseException as error:   # re-raised in the caller's thread
+            outcome['error'] = error
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    while worker.is_alive():
+        jobs.check()
+        worker.join(poll)
+    if 'error' in outcome:
+        raise outcome['error']
+    return outcome['value']
+
+
+class _LocalResponse:
+    def __init__(self, body, model):
+        self.model = body.get('model', model)
+        self.seconds = (body.get('total_duration') or 0)/1e9
+        self.usage = dict(prompt_tokens=body.get('prompt_eval_count'), output_tokens=body.get('eval_count'),
+                          seconds=round(self.seconds, 1))

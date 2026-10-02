@@ -469,6 +469,62 @@ def swap_shots(timeline, swaps, excluded=()):
     return result, applied, rejected
 
 
+PLAN_TRANSITIONS = {'cut': 'cut', 'push_left': 'smoothleft', 'push_right': 'smoothright', 'zoom': 'zoomin',
+                    'blur': 'hblur', 'dissolve': 'fade'}
+
+
+def apply_plan(timeline, assignments, music, excluded=()):
+    """Execute a director plan on the draft's beat slots.
+
+    ``assignments`` = [(slot, moment, treatment, transition_out)]. Slot timing never changes;
+    treatment sets the speed profile and punch-ins; every placement is checked for source
+    bounds, footage reuse and non-gameplay spans. Slots that cannot be honoured keep the draft.
+    """
+    beats = np.asarray(music.get('beats', []), dtype=float)
+    clips, notes = list(timeline.clips), []
+    blocked = [(c['source'], *(c.get('span') or (c['time']-1, c['time']+1))) for c in excluded]
+    starts = np.cumsum([0.0]+[c.duration for c in clips[:-1]])
+    planned = {}
+    assigned = {a[0] for a in assignments}
+    for slot, moment, treatment, _ in assignments:
+        draft = clips[slot]
+        profile = 'ramp' if treatment == 'ramp' and draft.duration >= 1 else 'normal'
+        if treatment == 'ramp' and profile != 'ramp':
+            notes.append(dict(slot=slot+1, note='ramp needs a 1 s shot; played straight'))
+        target = draft.duration/2 if profile == 'ramp' else (
+            draft.anchor_output if draft.anchor_output is not None else draft.duration/2)
+        accents = []
+        if treatment == 'punch':
+            inside = [float(b-starts[slot]) for b in beats if starts[slot]+.2 < b < starts[slot]+draft.duration-.2]
+            accents = [round(t, 4) for t in inside[:4]]
+        shell = replace(draft, speed_profile=profile, anchor_output=target, accents=accents)
+        placed, reason = _place(shell, moment)
+        if reason is None:
+            # Check against shots that will certainly stay (unplanned slots) and accepted plan entries.
+            staying = [planned.get(j) or (c if j not in assigned else None) for j, c in enumerate(clips)]
+            reason = _conflict([c or Clip('', 0, 1e-9, 0) for c in staying], slot, placed, blocked)
+        if reason:
+            notes.append(dict(slot=slot+1, note=reason)); continue
+        planned[slot] = placed
+    for slot, clip in planned.items():
+        clips[slot] = clip
+    # Any draft shot now colliding with planned footage is a real conflict: undo that plan entry.
+    for slot in list(planned):
+        if _conflict(clips, slot, clips[slot], []):
+            clips[slot] = timeline.clips[slot]; planned.pop(slot)
+            notes.append(dict(slot=slot+1, note='would reuse footage still in the cut; kept the draft shot'))
+    transitions = list(timeline.boundary_transitions)
+    if timeline.transition in BLENDS:
+        transitions = transitions or ['cut']*(len(clips)-1)
+        for slot, _, _, out in assignments:
+            if slot < len(clips)-1:
+                transitions[slot] = PLAN_TRANSITIONS[out]
+    result = replace(timeline, clips=clips, boundary_transitions=transitions if timeline.transition in BLENDS else
+                     list(timeline.boundary_transitions))
+    result.validate()
+    return result, sorted(planned), notes
+
+
 def shot_moment(clip):
     """The source instant a shot is built around (its anchor, else its middle)."""
     if clip.anchor_source is not None:
@@ -864,9 +920,11 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     ai_plan = None
     vision = None
     if ai_editor is not None:
-        LOG.info('Requesting Claude vision review of candidate moments')
-        jobs.report(.36,'Claude is reviewing your best moments')
-        candidates, vision = ai_editor.review(candidates, brief or '')
+        label = getattr(ai_editor, 'label', 'AI')
+        LOG.info('Requesting %s vision review of candidate moments', label)
+        jobs.report(.36, f'{label} is reviewing your best moments')
+        with jobs.span(.36, .39):
+            candidates, vision = ai_editor.review(candidates, brief or '')
     if ai_model:
         from .ai_director import OllamaDirector, configure_plan, DEFAULT_BRIEF
         LOG.info('Requesting local Ollama director plan')
@@ -876,14 +934,6 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                    'evidence':'motion/audio metadata only; no visual semantic analysis'}
     timeline = direct(candidates, analysis, song['path'], settings, duration, ordered=bool(ai_model),cinematic=bool(story and story.get('edit_profile')=='cinematic'))
     timeline = replace(timeline,music_start=music_start)
-    if vision is not None and hasattr(ai_editor, 'review_cut'):
-        LOG.info('Requesting Claude review of the planned cut')
-        jobs.report(.42,'Claude is reviewing the cut')
-        try:
-            timeline, vision['cut_review'] = ai_editor.review_cut(timeline, candidates, analysis, brief or '')
-        except ValueError as error:
-            # The first-pass plan is already valid; a failed review keeps it and says why.
-            vision['cut_review'] = {'error': str(error)}
     if ai_plan:
         timeline = replace(timeline,transition=plan['transition'],transition_duration=plan['transition_duration'])
     if story is not None:
@@ -899,7 +949,23 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            bookends=bool(story.get('bookends',False)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
-    if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):
+    if vision is not None and getattr(ai_editor, 'direct_edit', False) and hasattr(ai_editor, 'plan_edit'):
+        LOG.info('Requesting %s edit direction', label)
+        jobs.report(.39, f'{label} is directing the edit')
+        try:
+            timeline, vision['edit_plan'] = ai_editor.plan_edit(timeline, candidates, analysis, brief or '')
+        except ValueError as error:
+            vision['edit_plan'] = {'error': str(error)}
+    if vision is not None and hasattr(ai_editor, 'review_cut'):
+        LOG.info('Requesting %s review of the planned cut', label)
+        jobs.report(.42, f'{label} is reviewing the cut')
+        try:
+            timeline, vision['cut_review'] = ai_editor.review_cut(timeline, candidates, analysis, brief or '')
+        except ValueError as error:
+            # The first-pass plan is already valid; a failed review keeps it and says why.
+            vision['cut_review'] = {'error': str(error)}
+    if (timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats')
+            and not timeline.boundary_transitions):
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
     jobs.report(.45,'Rendering')
     with jobs.span(.45, 1.0):
@@ -908,9 +974,10 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan,
                                        'ai_editor': vision,
                                        'screen_analysis': screen_report}, indent=2))
-    report['ai_director'] = 'ollama' if ai_model else ('claude vision' if vision else 'heuristic')
+    report['ai_director'] = 'ollama' if ai_model else \
+        (('local vision' if vision.get('provider', '').startswith('ollama') else 'claude vision') if vision else 'heuristic')
     if vision:
-        report['ai_editor'] = {k: vision[k] for k in ('model','reviewed','usable','events') if k in vision}
+        report['ai_editor'] = {k: vision[k] for k in ('provider','model','reviewed','usable','events','seconds') if k in vision}
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
     report['music_alignment'] = alignment_report(timeline, analysis)

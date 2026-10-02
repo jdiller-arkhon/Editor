@@ -14,15 +14,17 @@ from types import SimpleNamespace
 from montage_editor.config import Settings
 from montage_editor.pipeline import Timeline, create_montage
 from montage_editor.pipeline import Clip, swap_shots
-from montage_editor.vision_director import (FALLBACK_BETA, MODEL, REVIEW_SYSTEM, ClaudeDirector, apply_review,
-                                            review_pool, validate_review, validate_swaps)
+from montage_editor.vision_director import (DIRECT_SYSTEM, DIRECTOR_MODEL, FALLBACK_BETA, MODEL, REVIEW_SYSTEM,
+                                            ClaudeDirector, apply_review, review_pool, validate_direction,
+                                            validate_review, validate_swaps)
 from test_rhythm import write_song
 
 
 class FakeClient:
-    def __init__(self, judge, stop_reason='end_turn', cut=None):
+    def __init__(self, judge, stop_reason='end_turn', cut=None, direct=None):
         self.judge, self.stop_reason, self.calls = judge, stop_reason, []
         self.cut = cut or (lambda text: dict(swaps=[], notes='Cut is strong.'))
+        self.direct = direct or (lambda text: dict(slots=[], arc='Keep the draft.'))
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
@@ -30,6 +32,8 @@ class FakeClient:
         blocks = kwargs['messages'][0]['content']
         if kwargs['system'] == REVIEW_SYSTEM:
             text = json.dumps(self.cut(blocks[0]['text']))
+        elif kwargs['system'] == DIRECT_SYSTEM:
+            text = json.dumps(self.direct(blocks[0]['text']))
         else:
             ids = [int(b['text'].split()[1].rstrip(':')) for b in blocks
                    if b['type'] == 'text' and b['text'].startswith('Candidate ')]
@@ -220,6 +224,69 @@ class VisionDirectorTests(unittest.TestCase):
         self.assertTrue(report['full_decode'])
         analysis = json.loads(output.with_suffix('.analysis.json').read_text())
         self.assertIn('error', analysis['ai_editor']['cut_review'])
+
+    def test_claude_directs_moments_treatments_and_transitions(self):
+        song, output = self.root/'song.wav', self.root/'directed.mp4'
+        write_song(song, bpm=128, seconds=20, lift_bar=4)
+        seen = {}
+
+        def direct(text):
+            seen['text'] = text
+            slots = [l for l in text.splitlines() if l[:1] == 'S' and l[1:2].isdigit()]
+            moments = [l for l in text.splitlines() if l[:1] == 'M' and l[1:2].isdigit()]
+            best = next(int(l.split(':')[0][1:]) for l in moments if 'multi_elimination' in l)
+            others = [int(l.split(':')[0][1:]) for l in moments if 'multi_elimination' not in l]
+            long_slot = next(i for i, l in enumerate(slots, 1) if float(l.split('(')[1].split('s')[0]) >= 1.0)
+            plan = [dict(slot=long_slot, moment=best, treatment='ramp', transition_out='push_left')]
+            plan += [dict(slot=i, moment=m, treatment='punch', transition_out='cut')
+                     for i, m in zip((i for i in range(1, len(slots)+1) if i != long_slot), others)]
+            seen['slot'] = long_slot
+            return dict(slots=plan, arc='Open strong, land the double on the long slot.')
+        client = FakeClient(judge, direct=direct)
+        settings = Settings(width=160, height=90, fps=30, duration=8, quality='draft')
+        report = create_montage([self.video], song, output, settings,
+                                story=dict(edit_profile='cinematic', transition='cinematic'),
+                                ai_editor=ClaudeDirector(client=client))
+        self.assertTrue(report['full_decode'])
+        request = next(c for c in client.calls if c['system'] == DIRECT_SYSTEM)
+        self.assertEqual(request['model'], DIRECTOR_MODEL)
+        self.assertEqual(sum(b['type'] == 'image' for b in request['messages'][0]['content']), 1)
+        self.assertIn('FINAL (closing line)', seen['text']); self.assertIn('BPM', seen['text'])
+        analysis = json.loads(output.with_suffix('.analysis.json').read_text())
+        plan = analysis['ai_editor']['edit_plan']
+        self.assertIn(seen['slot'], plan['applied'])
+        timeline = Timeline.load(output.with_suffix('.timeline.json'))
+        hero = timeline.clips[seen['slot']-1]
+        best = next(c for c in analysis['candidates'] if c.get('event') == 'multi_elimination')
+        self.assertTrue(hero.start <= best['time'] <= hero.start+hero.duration)
+        self.assertEqual(hero.speed_profile, 'ramp')
+        if seen['slot'] < len(timeline.clips):
+            self.assertEqual(timeline.boundary_transitions[seen['slot']-1], 'smoothleft')
+        for i, a in enumerate(timeline.clips):
+            for b in timeline.clips[i+1:]:
+                self.assertTrue(a.source != b.source or a.start+a.duration <= b.start+1e-6 or b.start+b.duration <= a.start+1e-6)
+
+    def test_direction_is_validated_and_conflicts_keep_the_draft(self):
+        good = dict(slots=[dict(slot=1, moment=0, treatment='ramp', transition_out='cut'),
+                           dict(slot=2, moment=1, treatment='ramp', transition_out='zoom')], arc='x')
+        assignments, _ = validate_direction(good, 3, 2)
+        self.assertEqual([a[2] for a in assignments], ['ramp', 'straight'])   # no back-to-back slow motion
+        for bad in (dict(good, slots=[dict(good['slots'][0], slot=4)]), dict(good, slots=[dict(good['slots'][0], moment=2)]),
+                    dict(good, slots=[good['slots'][0], dict(good['slots'][1], moment=0)]),
+                    dict(good, slots=[dict(good['slots'][0], treatment='spin')]), {'slots': 'all'}):
+            with self.assertRaises(ValueError):
+                validate_direction(bad, 3, 2)
+        from montage_editor.pipeline import apply_plan
+        timeline = Timeline(1, 'm', Settings().__dict__, [Clip(str(self.video), 2, 2, .5), Clip(str(self.video), 10, 2, .5),
+                                                          Clip(str(self.video), 20, 2, .5)], transition='cinematic')
+        moment = lambda t: dict(source=str(self.video), time=t, score=1.0, source_duration=30.0)
+        # Slot 1 takes footage at 25 s; slot 2 asks for 25.5 s too: overlapping, so it keeps its draft.
+        result, applied, notes = apply_plan(timeline, [(0, moment(25.0), 'straight', 'push_right'),
+                                                       (1, moment(25.5), 'straight', 'cut')], {'beats': []})
+        self.assertEqual(applied, [0])
+        self.assertTrue(any('reuse' in n['note'] for n in notes))
+        self.assertEqual(result.clips[1], timeline.clips[1])
+        self.assertEqual(result.boundary_transitions[0], 'smoothright')
 
 
 if __name__ == '__main__':

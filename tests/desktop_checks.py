@@ -176,7 +176,7 @@ class DesktopTests(unittest.TestCase):
 
     def test_quick_create_connects_quality_and_cinematic_engine(self):
         window=Studio()
-        window.director_mode.setCurrentIndex(0)
+        window.director_mode.setCurrentIndex(window.director_mode.findData('activity'))
         window.footage.addItem('clip.mp4');window.music_path='song.wav'
         with patch.object(window,'resolve_song',return_value=True), \
              patch('montage_editor.desktop.RenderJob') as job, \
@@ -215,8 +215,42 @@ class DesktopTests(unittest.TestCase):
             self.assertIsInstance(create.call_args.kwargs['ai_editor'],ClaudeDirector)
             self.assertIsNone(create.call_args.args[5])
         window.job=None
-        window.director_mode.setCurrentIndex(0)
+        window.director_mode.setCurrentIndex(window.director_mode.findData('activity'))
         window.close()
+
+    def test_local_ai_director_is_the_default_and_must_be_ready(self):
+        from montage_editor.vision_director import LocalDirector
+        with tempfile.TemporaryDirectory() as d:
+            prefs=QSettings(str(Path(d)/'local.ini'),QSettings.IniFormat)
+            window=Studio(prefs)
+            self.assertEqual(window.director_mode.currentData(),'local')
+            self.assertEqual(window.ai_model.text(),'qwen2.5vl:7b')
+            self.assertTrue(window.ai_model.isEnabled() and window.setup_button.isEnabled())
+            window.footage.addItem('clip.mp4');window.music_path='song.wav'
+            with patch.object(window,'resolve_song',return_value=True), \
+                 patch('montage_editor.local_ai.readiness',return_value=(False,'Ollama is not running on this computer.')), \
+                 patch('montage_editor.desktop.QMessageBox.warning') as warning, \
+                 patch('montage_editor.desktop.RenderJob') as job:
+                window.export(automatic=True)
+                job.assert_not_called()
+                self.assertIn('Ollama is not running',warning.call_args.args[2])
+                self.assertIn('activity engine',warning.call_args.args[2])
+            with patch.object(window,'resolve_song',return_value=True), \
+                 patch('montage_editor.local_ai.readiness',return_value=(True,'qwen2.5vl:7b is ready')), \
+                 patch('montage_editor.desktop.RenderJob') as job, \
+                 patch('montage_editor.desktop.create_montage') as create:
+                window.export(automatic=True)
+                job.call_args.args[0]()
+                editor=create.call_args.kwargs['ai_editor']
+                self.assertIsInstance(editor,LocalDirector)
+                self.assertEqual((editor.model,editor.director_model),('qwen2.5vl:7b','qwen2.5vl:7b'))
+                self.assertEqual(window.local_status.text(),'qwen2.5vl:7b is ready')
+            window.job=None;window.close()
+            old=QSettings(str(Path(d)/'old.ini'),QSettings.IniFormat)
+            old.setValue('director_mode',2)
+            migrated=Studio(old)
+            self.assertEqual(migrated.director_mode.currentData(),'claude')
+            migrated.close()
 
     def test_story_tone_is_subtle_by_default_and_custom_line_survives_reload(self):
         with tempfile.TemporaryDirectory() as d:

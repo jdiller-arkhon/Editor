@@ -20,6 +20,7 @@ from . import jobs
 from .workspace_widgets import BrandMark, CinemaCanvas, TimelineLanes, CathedralBanner
 from .music_library import find_songs, AUDIO, VIDEO
 from .config import Settings, draft_of, preset
+from .vision_director import LOCAL_MODEL
 from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay, exchange_shots, retarget, swap_shots
 
 STORY_TONES = {
@@ -126,6 +127,10 @@ def panel(kind='panel'):
     layout.setContentsMargins(18,18,18,18)
     layout.setSpacing(12)
     return frame, layout
+
+
+DIRECTORS=[('Local AI director • on this computer (Ollama)','local'),('Activity engine • no AI','activity'),
+           ('Claude vision editor • cloud, optional','claude')]
 
 
 class RenderJob(QThread):
@@ -358,19 +363,24 @@ class Studio(QMainWindow):
         form.setRowWrapPolicy(QFormLayout.WrapAllRows)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.director_mode=QComboBox()
-        self.director_mode.addItems(['Automatic • activity engine','Automatic • Ollama (experimental)',
-                                     'Automatic • Claude vision editor'])
-        form.addRow('Director',self.director_mode)
+        for title,key in DIRECTORS:self.director_mode.addItem(title,key)
+        form.addRow('AI director',self.director_mode)
         self.director_note=QLabel('Claude reviews sampled frames of your footage to pick highlights. '
                                   'Frames are sent to Anthropic; needs ANTHROPIC_API_KEY or ant auth login.')
         self.director_note.setWordWrap(True)
         self.director_note.setVisible(False)
-        self.director_mode.currentIndexChanged.connect(lambda i:self.director_note.setVisible(i==2))
+        self.director_mode.currentIndexChanged.connect(lambda i:self.director_note.setVisible(self.director_mode.itemData(i)=='claude'))
         form.addRow(self.director_note)
-        self.ai_model=QLineEdit();self.ai_model.setPlaceholderText('Installed Ollama model name')
-        self.ai_model.setEnabled(False)
-        self.director_mode.currentIndexChanged.connect(lambda i:self.ai_model.setEnabled(i==1))
-        form.addRow('Local model',self.ai_model)
+        self.ai_model=QLineEdit(LOCAL_MODEL);self.ai_model.setPlaceholderText('Ollama vision model, e.g. '+LOCAL_MODEL)
+        self.director_mode.currentIndexChanged.connect(lambda i:self.ai_model.setEnabled(self.director_mode.itemData(i)=='local'))
+        form.addRow('Local vision model',self.ai_model)
+        self.local_status=QLabel('Runs on this computer with Ollama • your footage never leaves it.')
+        self.local_status.setWordWrap(True)
+        form.addRow(self.local_status)
+        self.setup_button=QPushButton('Set up local AI')
+        self.setup_button.clicked.connect(self.setup_local_ai)
+        self.director_mode.currentIndexChanged.connect(lambda i:self.setup_button.setEnabled(self.director_mode.itemData(i)=='local'))
+        form.addRow(self.setup_button)
         self.ai_brief=QLineEdit();self.ai_brief.setPlaceholderText('Describe the feeling, pace, or message…')
         form.addRow('Creative brief',self.ai_brief)
         self.story_tone=QComboBox()
@@ -450,9 +460,11 @@ class Studio(QMainWindow):
         workspace.setSizes([1100,400])
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
-        self.ai_model.setText(str(self.preferences.value('ai_model','')))
-        saved_mode=int(self.preferences.value('director_mode',0))
-        self.director_mode.setCurrentIndex(saved_mode if saved_mode in (0,1,2) else 0)
+        self.ai_model.setText(str(self.preferences.value('local_model',LOCAL_MODEL)) or LOCAL_MODEL)
+        saved=self.preferences.value('director',None)
+        if saved is None:   # earlier versions stored an index: 0 activity (default), 1 Ollama text, 2 Claude
+            saved={'2':'claude'}.get(str(self.preferences.value('director_mode',0)),'local')
+        self.director_mode.setCurrentIndex(max(0,self.director_mode.findData(saved)))
         self.ai_brief.setText(str(self.preferences.value('brief','')))
         self.ai_model.editingFinished.connect(self.save_preferences)
         self.director_mode.currentIndexChanged.connect(self.save_preferences)
@@ -467,8 +479,8 @@ class Studio(QMainWindow):
         self.closing_line.editingFinished.connect(self.save_preferences)
 
     def save_preferences(self,*args):
-        for key,value in [('music_folder',self.music_folder),('ai_model',self.ai_model.text().strip()),
-                          ('director_mode',self.director_mode.currentIndex()),('brief',self.ai_brief.text().strip()),
+        for key,value in [('music_folder',self.music_folder),('local_model',self.ai_model.text().strip()),
+                          ('director',self.director_mode.currentData()),('brief',self.ai_brief.text().strip()),
                           ('story_tone',self.story_tone.currentData()),('closing_line',self.closing_line.text())]:
             self.preferences.setValue(key,value)
 
@@ -477,6 +489,54 @@ class Studio(QMainWindow):
         if self.closing_line.text() in defaults:
             self.closing_line.setText(STORY_TONES[self.story_tone.currentData()][1])
         self.save_preferences()
+
+    def ai_director(self):
+        """The chosen AI editor (None for the activity engine); the local model must be ready."""
+        mode=self.director_mode.currentData()
+        if mode=='claude':
+            from .vision_director import ClaudeDirector
+            return ClaudeDirector()
+        if mode!='local':return None
+        from .local_ai import readiness
+        from .vision_director import LocalDirector
+        model=self.ai_model.text().strip() or LOCAL_MODEL
+        ready,message=readiness(model)
+        self.local_status.setText(message)
+        if not ready:raise ValueError(message+' Or choose the activity engine under AI director.')
+        return LocalDirector(model)
+
+    def setup_local_ai(self):
+        """Check Ollama and download the chosen vision model through it, with progress and cancel."""
+        from .local_ai import INSTALL_URL, RECOMMENDED, pull, readiness, status, valid_name
+        model=self.ai_model.text().strip() or LOCAL_MODEL
+        if not valid_name(model):
+            QMessageBox.warning(self,'Local AI','Enter a model name such as '+LOCAL_MODEL);return
+        state=status()
+        if not state['running']:
+            self.local_status.setText('Ollama is not running. Install it, start it, then press Set up again.')
+            if QMessageBox.question(self,'Local AI','Ollama runs the AI director on this computer. '
+                                    'Open the Ollama download page?')==QMessageBox.Yes:
+                QDesktopServices.openUrl(QUrl(INSTALL_URL))
+            return
+        ready,message=readiness(model)
+        if ready:
+            self.local_status.setText(message);return
+        if self.job is not None:
+            QMessageBox.information(self,'Local AI','Wait for the current job to finish.');return
+        size=next((f' (about {m["size_gb"]:g} GB)' for m in RECOMMENDED if m['name']==model),'')
+        if QMessageBox.question(self,'Local AI',f'Download {model}{size} with Ollama? It stays on this computer.')!=QMessageBox.Yes:
+            return
+        self.job=RenderJob(lambda:pull(model,progress=jobs.report))
+        self.job.done.connect(lambda _:self.local_status.setText(readiness(model)[1]))
+        self.job.failed.connect(lambda m:self.local_status.setText('Download stopped • '+m))
+        self.job.progress.connect(self.on_progress)
+        self.job.finished.connect(self.setup_finished)
+        self.setup_button.setEnabled(False);self.create_button.setEnabled(False);self.cancel_button.setEnabled(True)
+        self.job.start()
+
+    def setup_finished(self):
+        self.job.deleteLater();self.job=None;self.setup_button.setEnabled(True);self.create_button.setEnabled(True)
+        self.cancel_button.setEnabled(False);self.progress.setRange(0,1);self.progress.setValue(1)
 
     def show_advanced(self,target=None):
         self.inspector_scroll.show()
@@ -728,14 +788,9 @@ class Studio(QMainWindow):
                                  gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,
                                  auto_music_section=self.auto_music_section.isChecked())
                 if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
-                model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None
-                if self.director_mode.currentIndex()==1 and not model: raise ValueError('Enter an installed local Ollama model name')
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
-                editor=None
-                if self.director_mode.currentIndex()==2:
-                    from .vision_director import ClaudeDirector
-                    editor=ClaudeDirector()
-                operation=lambda:create_montage(sources,song,path,settings,story,model,brief,ai_editor=editor)
+                editor=self.ai_director()
+                operation=lambda:create_montage(sources,song,path,settings,story,None,brief,ai_editor=editor)
         except Exception as error:
             QMessageBox.warning(self,'Check story settings',str(error)); return
         self.create_button.setEnabled(False);self.create_button.setText('Creating your montage…')

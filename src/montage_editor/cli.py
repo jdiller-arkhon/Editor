@@ -7,6 +7,25 @@ from .environment import detect_environment
 from .pipeline import Timeline, create_montage, render
 
 
+def choose_director(mode, local_model=None, claude_model=None):
+    """The AI editor object for create_montage, or None for the activity engine."""
+    from .vision_director import LOCAL_MODEL, MODEL, ClaudeDirector, LocalDirector
+    if mode == 'claude':
+        return ClaudeDirector(claude_model or MODEL)
+    if mode == 'activity':
+        return None
+    from .local_ai import readiness
+    model = local_model or LOCAL_MODEL
+    ready, message = readiness(model)
+    if ready:
+        logging.info('Local AI director: %s', message)
+        return LocalDirector(model)
+    if mode == 'local':
+        raise ValueError(message)
+    logging.warning('Local AI director unavailable (%s) - using the activity engine', message)
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description='Local gaming montage editor')
     commands = parser.add_subparsers(dest='command', required=True)
@@ -18,9 +37,12 @@ def main():
     create.add_argument('--duration', type=float, default=30)
     create.add_argument('--width', type=int, default=1280)
     create.add_argument('--height', type=int, default=720)
-    create.add_argument('--ollama-model', help='Installed local Ollama model for experimental automatic direction')
-    create.add_argument('--claude-editor', action='store_true',
-                        help='Send sampled frames of candidate moments to Claude for highlight review (needs Anthropic credentials)')
+    create.add_argument('--director', choices=['auto', 'local', 'claude', 'activity'], default='auto',
+                        help='auto (default): the local vision AI when Ollama has the model, otherwise the activity '
+                             'engine; local: require the local AI; claude: send frames to Claude; activity: no AI')
+    create.add_argument('--local-model', default=None, help='Ollama vision model for the local director (default qwen2.5vl:7b)')
+    create.add_argument('--ollama-model', help='Legacy text-only Ollama planner (motion/audio numbers, no vision)')
+    create.add_argument('--claude-editor', action='store_true', help='Same as --director claude')
     create.add_argument('--claude-model', default=None, help='Override the Claude model for --claude-editor')
     create.add_argument('--brief', help='Creative brief for the AI director/editor')
     create.add_argument('--story', help='JSON dialogue cues and transition settings')
@@ -42,7 +64,9 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
     try:
         if args.command == 'doctor':
+            from .local_ai import RECOMMENDED, status
             result = detect_environment()
+            result['local_ai'] = dict(status(), recommended=RECOMMENDED[0]['name'])
         elif args.command == 'add-music':
             from .music_sources import NOTICE, add_music
             logging.info(NOTICE)
@@ -71,10 +95,8 @@ def main():
             if args.story:
                 from pathlib import Path
                 story = json.loads(Path(args.story).read_text(encoding='utf-8'))
-            editor = None
-            if args.claude_editor:
-                from .vision_director import ClaudeDirector, MODEL
-                editor = ClaudeDirector(args.claude_model or MODEL)
+            editor = choose_director('claude' if args.claude_editor else args.director, args.local_model,
+                                     args.claude_model)
             result = create_montage(args.gameplay, args.music, args.output, settings, story, args.ollama_model,
                                     args.brief, ai_editor=editor)
         print(json.dumps(result, indent=2))
