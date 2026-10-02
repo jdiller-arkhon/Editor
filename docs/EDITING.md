@@ -186,3 +186,10 @@ so steady sections alternate lengths instead of cutting identically every bar (t
 the penalty). In cinematic edits the two bars after the bar following a drop/lift may cut in double
 time — 2-beat shots (1-beat for songs slower than ~110 BPM) below `minimum_clip`, at most four — while
 the drop shot itself stays long enough for its impact ramp.
+
+
+### Bookends (implemented; `bookends`, quick-create default)
+
+0.5 s fade in from black on the first shot, 0.8 s fade to black at the end, and the closing line set in
+the bundled Sora face with a soft shadow, fading in 0.35 s into the final shot instead of appearing as
+a boxed caption for the whole shot. Saved projects keep the original caption style.

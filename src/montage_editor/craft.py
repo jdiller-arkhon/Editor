@@ -22,6 +22,7 @@ SFX = ('none', 'swish')
 SWISHES = sorted((Path(__file__).parent/'resources'/'sfx').glob('swish-*.ogg'))
 SWISH_EFFECTS = {'smoothleft', 'smoothright', 'zoomin', 'hblur'}
 SWISH_GAIN, SWISH_LEAD = .3, .06
+TITLE_FONT = Path(__file__).parent/'resources'/'fonts'/'Sora-700.ttf'
 
 
 def interpolation_filter(mode, source_fps, out_fps, width, height):

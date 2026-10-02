@@ -725,7 +725,7 @@ class Studio(QMainWindow):
                 song=self.music_path; story=self.story()
                 if automatic:
                     story.update(faith_message=self.closing_line.text().strip(),edit_profile='cinematic',
-                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,
+                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,
                                  auto_music_section=self.auto_music_section.isChecked())
                 if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
                 model=self.ai_model.text().strip() if self.director_mode.currentIndex()==1 else None

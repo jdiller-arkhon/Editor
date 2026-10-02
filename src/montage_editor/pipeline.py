@@ -219,6 +219,7 @@ class Timeline:
     sfx: str = 'none'
     punch_through: bool = False
     match_shots: bool = False
+    bookends: bool = False
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -234,7 +235,7 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
-        if not isinstance(self.punch_through, bool) or not isinstance(self.match_shots, bool):
+        if not all(isinstance(v, bool) for v in (self.punch_through, self.match_shots, self.bookends)):
             raise ValueError('punch_through must be true or false')
         if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
                 not isinstance(self.motion_blur, bool) or self.reframe not in craft.REFRAME or
@@ -643,6 +644,9 @@ def render(timeline, output):
         temporary = Path(temporary)
         if timeline.faith_message:
             (temporary/'faith-title.txt').write_text(timeline.faith_message,encoding='utf-8')
+            if timeline.bookends and craft.TITLE_FONT.is_file():
+                # Copied beside the job so the filter never has to escape a drive/path.
+                shutil.copyfile(craft.TITLE_FONT,temporary/'title.ttf')
         matches, corrections = ([''] * len(timeline.clips), [None] * len(timeline.clips))
         if timeline.match_shots:
             jobs.report(0, 'Matching exposure and colour across shots')
@@ -658,10 +662,23 @@ def render(timeline, output):
                 transition_filter = (f',fade=t=in:d={length}:color={color},'
                                      f'fade=t=out:st={clip.duration-length}:d={length}:color={color}')
             title_filter = ''
-            if timeline.faith_message and i == len(timeline.clips)-1:
+            last = i == len(timeline.clips)-1
+            if timeline.faith_message and last and timeline.bookends:
+                # Closing line fades in a beat into the final shot, set in the display face.
+                appear = min(.35, clip.duration/4)
+                font = 'fontfile=title.ttf:' if (temporary/'title.ttf').is_file() else ''
+                title_filter = (f",drawtext={font}textfile=faith-title.txt:expansion=none:fontcolor=white:"
+                                f"fontsize={max(18,settings.height//16)}:shadowcolor=black@0.55:shadowx=0:shadowy=2:"
+                                f"x=(w-tw)/2:y=h*0.78-th/2:alpha='if(lt(t,{appear:.3f}),0,min(1,(t-{appear:.3f})/0.45))'")
+            elif timeline.faith_message and last:
                 title_filter = (f',drawtext=textfile=faith-title.txt:expansion=none:fontcolor=white:'
                                 f'fontsize={max(18,settings.height//22)}:box=1:boxcolor=black@0.6:'
                                 f'boxborderw=12:x=(w-tw)/2:y=h-th-50')
+            if timeline.bookends and i == 0:
+                title_filter += f',fade=t=in:st=0:d={min(.5, clip.duration/3):.3f}'
+            if timeline.bookends and last:
+                out = min(.8, clip.duration/3)
+                title_filter += f',fade=t=out:st={clip.duration-out:.3f}:d={out:.3f}'
             media=probe(clip.source)
             has_audio=any(s['codec_type']=='audio' for s in media['streams'])
             graph=retime_filters(clip.duration,clip.speed_profile,has_audio)
@@ -879,6 +896,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            motion_blur=bool(story.get('motion_blur',False)),sfx=story.get('sfx','none'),
                            punch_through=bool(story.get('punch_through',False)),
                            match_shots=bool(story.get('match_shots',False)),
+                           bookends=bool(story.get('bookends',False)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):

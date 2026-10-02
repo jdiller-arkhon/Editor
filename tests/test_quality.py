@@ -203,3 +203,26 @@ class PacingTests(unittest.TestCase):
         lengths = [d for s, d in self.plan(self.music(lambda d: []), False)][:-1]
         self.assertGreater(len(set(lengths)), 1, lengths)
         self.assertFalse(any(a == b == c for a, b, c in zip(lengths, lengths[1:], lengths[2:])), lengths)
+
+
+class BookendTests(unittest.TestCase):
+    def test_fade_in_fade_out_and_closing_line_appears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video, music = root/'v.mp4', root/'m.wav'
+            ffmpeg('-f', 'lavfi', '-i', 'color=c=0x707070:s=320x180:r=30', '-t', '8', '-c:v', 'libx264',
+                   '-pix_fmt', 'yuv420p', str(video))
+            ffmpeg('-f', 'lavfi', '-i', 'sine=f=220', '-t', '8', str(music))
+            settings = Settings(width=320, height=180, fps=30, quality='draft')
+            base = Timeline(1, str(music), settings.__dict__, [Clip(str(video), 0, 2, 1), Clip(str(video), 3, 2.4, 1)],
+                            faith_message='Keep the faith.')
+            plain, polished = render(base, root/'plain.mp4'), render(replace(base, bookends=True), root/'polished.mp4')
+            self.assertTrue(plain['full_decode'] and polished['full_decode'])
+            a, b = gray_frames(root/'plain.mp4', 320, 180), gray_frames(root/'polished.mp4', 320, 180)
+            self.assertLess(b[0].mean(), 30); self.assertGreater(a[0].mean(), 90)        # fades in from black
+            self.assertLess(b[-1].mean(), 30)                                               # ends on black
+            last = 60   # first frame of the final shot
+            text = (slice(120, 160), slice(80, 240))
+            self.assertLess(np.abs(b[last+2][text]-112).max(), 20)          # line not yet visible
+            self.assertGreater(b[last+30][text].max(), 200)                 # then fades in, white
+            self.assertLess(np.abs(b[30]-a[30]).mean(), 1)                  # the middle is untouched
