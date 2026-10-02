@@ -214,10 +214,13 @@ class Studio(QMainWindow):
         self.song_name.textEdited.connect(lambda:self.clear_music_selection())
         song_row.addWidget(self.song_name,1)
         library=QPushButton('Music folder');library.clicked.connect(self.choose_music_folder);song_row.addWidget(library)
+        self.link_button=QPushButton('Add from link');self.link_button.setToolTip('Paste a YouTube video or Spotify track link')
+        self.link_button.clicked.connect(self.add_music_link)
         intake_layout.addLayout(song_row)
         self.music_label = label('No music selected','muted'); self.music_label.setWordWrap(True)
         music_row=QHBoxLayout(); music_row.addWidget(self.music_label,1)
         music = QPushButton('Choose file'); music.clicked.connect(self.import_music); music_row.addWidget(music)
+        music_row.addWidget(self.link_button)
         intake_layout.addLayout(music_row)
         intake_layout.addStretch()
         chips=QHBoxLayout(); chips.setSpacing(6)
@@ -515,8 +518,43 @@ class Studio(QMainWindow):
         self.add_files(files)
 
     def import_music(self):
-        path,_ = QFileDialog.getOpenFileName(self,'Choose music','','Audio (*.wav *.mp3 *.flac *.m4a);;All files (*)')
+        path,_ = QFileDialog.getOpenFileName(self,'Choose music','','Audio (*.wav *.mp3 *.flac *.m4a *.ogg *.opus *.aac);;All files (*)')
         if path: self.select_music(path)
+
+    def add_music_link(self,link=None):
+        from .music_sources import NOTICE, add_music, classify
+        if self.job is not None:
+            QMessageBox.information(self,'Busy','Wait for the current job to finish.');return
+        if link is None:
+            link,ok=QInputDialog.getText(self,'Add music from a link','YouTube video or Spotify track link:\n\n'+NOTICE)
+            if not ok or not link.strip():return
+        try:
+            classify(link)
+        except ValueError as error:
+            QMessageBox.information(self,'Unsupported link',str(error));return
+        if not self.music_folder or not Path(self.music_folder).is_dir():
+            self.choose_music_folder()
+            if not self.music_folder:return
+        folder=self.music_folder
+        self.status.setText('Fetching music from link…')
+        self.link_button.setEnabled(False);self.progress.setRange(0,0)
+        self.job=RenderJob(lambda:add_music(link,folder))
+        self.job.done.connect(self.music_link_added)
+        self.job.failed.connect(lambda message:(self.status.setText('Could not add music • '+message),
+                                                QMessageBox.warning(self,'Could not add music',message)))
+        self.job.finished.connect(self.music_link_finished)
+        self.job.start()
+
+    def music_link_added(self,result):
+        self.select_music(result['path'])
+        origin={'local library':'Found in your music folder','youtube':'Added from YouTube',
+                'youtube match for spotify track':'Added the YouTube match for this Spotify track'}.get(result['source'],'Added')
+        self.status.setText(f"{origin} • {Path(result['path']).name}")
+
+    def music_link_finished(self):
+        self.progress.setRange(0,1);self.progress.setValue(1)
+        self.link_button.setEnabled(True)
+        self.job.deleteLater();self.job=None
 
     def preview_file(self,path):
         if path:
@@ -636,7 +674,7 @@ class Studio(QMainWindow):
 
     def closeEvent(self,event):
         if self.job is not None:
-            QMessageBox.information(self,'Export in progress','Wait for the current export before closing.'); event.ignore()
+            QMessageBox.information(self,'Job in progress','Wait for the current job before closing.'); event.ignore()
         else: event.accept()
 
 

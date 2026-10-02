@@ -1,4 +1,4 @@
-"""Resolve a typed song name to user-supplied local audio; never download songs."""
+"""Resolve a typed song name to local audio files. Link downloads live in music_sources."""
 from pathlib import Path
 import re
 import unicodedata

@@ -67,3 +67,14 @@ fixed frames, commands, paths or effects, so musical sync, frame-clock and non-r
 local and testable. Cloud review is opt-in and disclosed because it sends footage frames off-machine;
 the local activity engine remains the default. Default model is claude-opus-5-5 with server-side
 fallback on refusal.
+
+## 2026-10-02 — Music from YouTube/Spotify links without touching DRM
+
+The user asked to add any song from YouTube or Spotify. YouTube audio is fetched with yt-dlp (optional
+extra) into the user's music folder as an audio-only file in its original codec, with a provenance
+sidecar. Spotify streams are DRM-protected and are never downloaded or decrypted; the public track
+page supplies title/artist/duration, a matching local song is preferred, otherwise the top YouTube
+search match is used only if its measured duration is within 7 s of Spotify's (else it is deleted).
+The UI and CLI show a rights notice: YouTube downloads may breach YouTube's Terms unless the uploader
+permits it, and published montages with copyrighted songs are commonly claimed. Playlists, albums,
+live streams and >20-minute items are refused.

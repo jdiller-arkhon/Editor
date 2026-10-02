@@ -26,6 +26,11 @@ def main():
     create.add_argument('--story', help='JSON dialogue cues and transition settings')
     create.add_argument('--quality',choices=['draft','high','master'],default='high')
     create.add_argument('--fps', type=int, default=30)
+    add = commands.add_parser('add-music', help='Add a soundtrack from a YouTube or Spotify track link')
+    add.add_argument('link')
+    add.add_argument('--folder', required=True, help='Your music folder')
+    add.add_argument('--local-only', action='store_true',
+                     help='For Spotify links, only use a matching song already in the folder')
     replay = commands.add_parser('render', help='Render a saved timeline')
     replay.add_argument('timeline')
     replay.add_argument('--output', required=True)
@@ -34,6 +39,10 @@ def main():
     try:
         if args.command == 'doctor':
             result = detect_environment()
+        elif args.command == 'add-music':
+            from .music_sources import NOTICE, add_music
+            logging.info(NOTICE)
+            result = add_music(args.link, args.folder, allow_youtube_match=not args.local_only)
         elif args.command == 'render':
             result = render(Timeline.load(args.timeline), args.output)
         else:

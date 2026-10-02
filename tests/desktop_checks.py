@@ -52,6 +52,25 @@ class DesktopTests(unittest.TestCase):
         self.assertGreater(min(corner.red(),corner.green(),corner.blue()),235)
         window.close()
 
+    def test_music_link_runs_in_background_and_selects_the_song(self):
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'link.ini'),QSettings.IniFormat))
+            window.music_folder=d
+            song=str(Path(d)/'Artist - Song [id].opus')
+            with patch('montage_editor.desktop.RenderJob') as job, \
+                 patch('montage_editor.music_sources.add_music',return_value=dict(path=song,source='youtube')) as add, \
+                 patch('montage_editor.desktop.QMessageBox.information') as info:
+                window.add_music_link('https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M')
+                info.assert_called_once(); job.assert_not_called()
+                window.add_music_link('https://youtu.be/abc')
+                self.assertFalse(window.link_button.isEnabled())
+                result=job.call_args.args[0]()
+                add.assert_called_once_with('https://youtu.be/abc',d)
+                window.music_link_added(result)
+            self.assertEqual(window.music_path,str(Path(song).resolve()))
+            self.assertIn('Added from YouTube',window.status.text())
+            window.job=None;window.close()
+
     def test_reference_workspace_and_real_analysis(self):
         window=Studio()
         self.assertFalse(window.banner.art.isNull())

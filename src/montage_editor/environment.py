@@ -14,6 +14,12 @@ def detect_environment():
                                 capture_output=True, text=True, timeout=15, check=True)
         result["encoders"] = [line.split()[1] for line in output.stdout.splitlines()
                               if len(line.split()) > 1 and line.startswith(" V") and line.split()[1] != "="]
+    try:
+        import yt_dlp
+        result["music_links"] = {"yt_dlp": yt_dlp.version.__version__,
+                                 "js_runtime": shutil.which("deno") or shutil.which("node")}
+    except ImportError:
+        result["music_links"] = None
     nvidia = shutil.which("nvidia-smi")
     if nvidia:
         output = subprocess.run([nvidia, "--query-gpu=name", "--format=csv,noheader"],
