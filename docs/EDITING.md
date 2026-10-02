@@ -177,3 +177,12 @@ to the montage median via `eq` gamma (bounded 0.8–1.25); colour gets only a ge
 `colorbalance` on midtones/highlights) because area lighting colour is usually deliberate in games.
 Transition handles receive the same correction. On real Xonotic shots the first version pushed
 orange-lit rooms to the ±0.10 limit, which would flatten intentional colour, so it was softened.
+
+
+### Pacing variety (implemented)
+
+The cut planner's dynamic program now tracks the previous shot's length and penalises repeating it,
+so steady sections alternate lengths instead of cutting identically every bar (tested; fails without
+the penalty). In cinematic edits the two bars after the bar following a drop/lift may cut in double
+time — 2-beat shots (1-beat for songs slower than ~110 BPM) below `minimum_clip`, at most four — while
+the drop shot itself stays long enough for its impact ramp.

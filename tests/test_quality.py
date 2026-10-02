@@ -171,3 +171,35 @@ class ShotMatchingTests(unittest.TestCase):
             self.assertLess(abs(cast(after[3])-neutral), abs(cast(before[3])-neutral))   # nudged, not flattened
             # Shots that already match are left essentially alone.
             self.assertLess(abs(luma(after[0])-luma(before[0])), 4)
+
+
+class PacingTests(unittest.TestCase):
+    def music(self, phrases):
+        period, offset = 60/128, .3
+        beats = [round(offset+i*period, 4) for i in range(80)]
+        return dict(beats=beats, downbeats=beats[::4], energy=[.5]*int(36/.05), hop_seconds=.05, onsets=beats,
+                    beat_confidence=1.0, tempo_bpm=128, phrases=phrases(beats[::4]))
+
+    def plan(self, music, cinematic):
+        from montage_editor.pipeline import direct
+        candidates = [{'source': f's{k}', 'time': float(t), 'score': .5, 'source_duration': 300}
+                      for k in range(3) for t in range(4, 290, 5)]
+        timeline = direct(candidates, music, 'song', Settings(), 30, cinematic=cinematic)
+        starts = np.cumsum([0]+[c.duration for c in timeline.clips[:-1]])
+        return [(round(float(s), 3), round(c.duration, 3)) for s, c in zip(starts, timeline.clips)]
+
+    def test_double_time_burst_follows_the_drop_bar_in_cinematic_mode_only(self):
+        music = self.music(lambda d: [dict(time=d[4], bar=4, kinds=['grid', 'drop'])])
+        drop, period = music['downbeats'][4], 60/128
+        cinematic = self.plan(music, True)
+        short = [(s, d) for s, d in cinematic if d < Settings().minimum_clip-1e-6]
+        self.assertTrue(2 <= len(short) <= 4, cinematic)
+        self.assertTrue(all(drop+4*period-.05 <= s and s+d <= drop+12*period+.05 for s, d in short))
+        drop_shot = next(d for s, d in cinematic if abs(s-drop) < .05)
+        self.assertGreaterEqual(drop_shot, 1.0)   # long enough for the impact ramp
+        self.assertFalse([d for s, d in self.plan(music, False) if d < Settings().minimum_clip-1e-6])
+
+    def test_steady_sections_vary_shot_length(self):
+        lengths = [d for s, d in self.plan(self.music(lambda d: []), False)][:-1]
+        self.assertGreater(len(set(lengths)), 1, lengths)
+        self.assertFalse(any(a == b == c for a, b, c in zip(lengths, lengths[1:], lengths[2:])), lengths)

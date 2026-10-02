@@ -227,13 +227,17 @@ def usable(music):
     return bool(music.get('beats')) and music.get('beat_confidence', 0) >= MINIMUM_CONFIDENCE
 
 
-def plan_cuts(music, settings, duration):
+def plan_cuts(music, settings, duration, bursts=False):
     """Choose cut points on tracked beats with a global dynamic-programming path.
 
     Shots end on beats (or the programme end), favouring downbeats, phrase boundaries
     and 2/4/8/16-beat lengths; higher local energy asks for shorter shots. Returns a
     list of (length, tags) with frame-quantized lengths summing to ``duration``, or an
     empty list when the clip-length bounds cannot be met from this beat grid.
+
+    Repeating the previous shot's length is mildly penalised so steady sections vary. With
+    ``bursts``, the two bars following the bar after a drop or lift may cut in double time (2-beat shots, or
+    1-beat shots for slow songs) below ``minimum_clip``.
     """
     fps = settings.fps
     tolerance = .5/fps
@@ -269,29 +273,48 @@ def plan_cuts(music, settings, duration):
         reward.append((.35 if near(downbeats, t) else 0)+(.8+(.4 if 'rise' in kinds or 'drop' in kinds else 0)
                                                          if kinds else 0))
     reward.append(.5)
-    best, back = [-np.inf]*len(times), [-1]*len(times)
-    best[0] = 0.0
+    period = float(np.median(np.diff(beats))) if len(beats) > 1 else 0.0
+    burst_beats = 1 if period >= .55 else 2
+    # The drop shot itself stays long enough for its impact ramp; the burst follows a bar later.
+    windows = [(t+4*period-tolerance, t+12*period+tolerance) for t, k in phrases if 'drop' in k or 'rise' in k] \
+        if bursts and period else []
+    in_burst = lambda a, b: any(lo <= a and b <= hi for lo, hi in windows)
+    # Search state: (node, length in frames of the shot that ended there) -> (score, back state).
+    best = [dict() for _ in times]
+    best[0][0] = (0.0, None)
     for j in range(1, len(times)):
         for i in range(j-1, -1, -1):
             length = times[j]-times[i]
             if length > settings.maximum_clip+tolerance:
                 break
-            if length < settings.minimum_clip-tolerance or best[i] == -np.inf:
+            if not best[i]:
                 continue
-            target = settings.maximum_clip-level(times[i], times[j])*span
-            score = best[i]+reward[j]-abs(length-target)/max(span, .25)
-            if beat_index[j] is not None and beat_index[j]-beat_index[i] in (2, 4, 8, 16):
-                score += .2
+            short = length < settings.minimum_clip-tolerance
+            beats_here = beat_index[j]-beat_index[i] if beat_index[j] is not None else None
+            if short and not (beats_here == burst_beats and in_burst(times[i], times[j])):
+                continue
+            if short:
+                base = reward[j]+.35   # a deliberate double-time burst after the drop
+            else:
+                target = settings.maximum_clip-level(times[i], times[j])*span
+                base = reward[j]-abs(length-target)/max(span, .25)
+                if beats_here in (2, 4, 8, 16):
+                    base += .2
             crossed = [t for t, k in phrases if times[i]+tolerance < t < times[j]-tolerance]
-            score -= 1.2*len(crossed)
-            if score > best[j]:
-                best[j], back[j] = score, i
-    if best[-1] == -np.inf:
+            base -= 1.2*len(crossed)
+            key = round(length*fps)
+            for previous, (score, _) in best[i].items():
+                total = score+base-(.15 if previous == key and not short else 0)
+                if key not in best[j] or total > best[j][key][0]:
+                    best[j][key] = (total, (i, previous))
+    if not best[-1]:
         return []
     path, j = [], len(times)-1
+    key = max(best[-1], key=lambda k: best[-1][k][0])
     while j > 0:
-        path.append((back[j], j))
-        j = back[j]
+        i, previous = best[j][key][1]
+        path.append((i, j))
+        j, key = i, previous
     plan = []
     for i, j in reversed(path):
         start, end = times[i], times[j]

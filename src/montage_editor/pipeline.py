@@ -301,7 +301,7 @@ def _attack_segments(music, settings, duration, cinematic):
 def _beat_segments(music, settings, duration, cinematic):
     """Beat-grid pacing: shot length follows song energy; impacts land on lifts/phrases."""
     segments, previous_impact, building = [], False, False
-    plan = plan_cuts(music, settings, duration)
+    plan = plan_cuts(music, settings, duration, bursts=cinematic)
     if not plan:
         # The beat grid cannot satisfy the clip-length bounds; keep attack pacing.
         music['cut_mode'] = 'attacks (beat path infeasible for clip bounds)'

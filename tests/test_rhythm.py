@@ -116,7 +116,12 @@ class BeatDirectorTests(unittest.TestCase):
         cuts, position = [], 0
         for clip in timeline.clips:
             self.assertAlmostEqual(clip.duration*settings.fps, round(clip.duration*settings.fps))
-            self.assertGreaterEqual(clip.duration, settings.minimum_clip-1e-6)
+            if clip.duration < settings.minimum_clip-1e-6:
+                # Only double-time bursts (2 beats) in the two bars after the bar following the lift.
+                lift = music['phrases'][1]['time']
+                start = position
+                self.assertAlmostEqual(clip.duration, 2*60/128, delta=1/30+1e-6)
+                self.assertTrue(lift+4*60/128-1/30 <= start and start+clip.duration <= lift+12*60/128+1/30)
             self.assertLessEqual(clip.duration, settings.maximum_clip+1e-6)
             position += clip.duration
             cuts.append(position)

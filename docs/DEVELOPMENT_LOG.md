@@ -173,3 +173,6 @@
 
 ## 2026-10-02 — Shot matching (Claude continuation)
 - Bounded per-shot exposure/colour matching, applied to handles too; colour strength reduced after inspecting real gameplay corrections. 65 core OK.
+
+## 2026-10-02 — Pacing variety (Claude continuation)
+- State-aware cut DP (length-repeat penalty) and post-drop double-time bursts. First version put the burst on the drop itself and removed the drop's impact ramp (caught by an existing render test); bursts now start a bar later. 67 core OK.
