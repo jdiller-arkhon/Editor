@@ -33,3 +33,22 @@ The recipe prepares video seconds 20–130, music seconds 30–58, then requests
 mastering, .24-second zoom decay and “Walk with Christ. Let grace lead the way.” closing title.
 The timeline/analysis/validation sidecars provide actual decisions rather than a hand-crafted
 sequence disguised as automatic editing. Original source files and renders are excluded from Git.
+
+## 2026-10-02 beat-grid sample (Claude continuation)
+
+Sources (kept outside Git): Xonotic duel "Draena vs MxCraven on Silent Siege" by Draena (2021,
+CC BY-SA 4.0, https://archive.org/details/xonotic-draena-vs-craven-silentsiege), seconds 60–300
+fetched with `ffmpeg -ss 60 -t 240 -c copy` and cropped `crop=960:540:0:90` to drop the streamer
+webcam/chat; music "Level 1" by Juhani Junkala (CC0, https://opengameart.org/content/5-chiptunes-action).
+Wikimedia Commons was rate-limited (HTTP 429) from this environment, so the earlier sources were not reused.
+
+Settings: 1280×720/30, 30 s, High, cinematic profile and per-cut transitions, auto song section,
+gameplay .25 / music .8, mastered, closing line "Keep the faith.", heuristic director (no Claude
+credentials available). Render 2 min 38 s on CPU; full decode passed.
+
+Measured: 120.27 BPM (confidence .986; downbeat confidence only ~.09, so bar phase may be off),
+12 cuts all on beats, 3/3 phrase boundaries cut with pushes, 9 hard cuts, 1 smooth ramp,
+2 beat punch-ins, −16.0 LUFS, −3.0 dBFS peak. Observed weaknesses: two shots land on the death /
+scoreboard screen and several are empty traversal, because motion activity cannot tell combat from
+UI; the track is very flat (LRA 0.6 LU) so no lifts and little build. These are the cases the
+opt-in Claude vision editor targets; it has not been run live here.
