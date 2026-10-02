@@ -170,3 +170,6 @@
 
 ## 2026-10-02 — Audio polish (Claude continuation)
 - Edge micro-fades and highlight punch-through. The first click test could not fail (the test tone was continuous across the cut); replaced by a guaranteed silence→peak step that fails without fades. 64 core, 13 desktop OK.
+
+## 2026-10-02 — Shot matching (Claude continuation)
+- Bounded per-shot exposure/colour matching, applied to handles too; colour strength reduced after inspecting real gameplay corrections. 65 core OK.

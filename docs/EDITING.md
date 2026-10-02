@@ -168,3 +168,12 @@ timing and total duration are unchanged. Not used with the follow reframe (its c
   eight) gameplay audio swells toward 0.9 and the music dips by up to 35% on 0.14 s Gaussian
   envelopes, so the highlight's own shot/explosion lands. Measured on a render: the gameplay band at
   the moment rose >2.5×, the music band fell >20%, elsewhere unchanged. Saved projects default off.
+
+
+### Shot matching (implemented; `match_shots`, quick-create default)
+
+Each shot's mean luma and RGB balance are measured from three frames. Exposure moves 60% of the way
+to the montage median via `eq` gamma (bounded 0.8–1.25); colour gets only a gentle nudge (35%, ±0.05
+`colorbalance` on midtones/highlights) because area lighting colour is usually deliberate in games.
+Transition handles receive the same correction. On real Xonotic shots the first version pushed
+orange-lit rooms to the ±0.10 limit, which would flatten intentional colour, so it was softened.

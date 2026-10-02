@@ -218,6 +218,7 @@ class Timeline:
     reframe: str = 'fit'
     sfx: str = 'none'
     punch_through: bool = False
+    match_shots: bool = False
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -233,7 +234,7 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
-        if not isinstance(self.punch_through, bool):
+        if not isinstance(self.punch_through, bool) or not isinstance(self.match_shots, bool):
             raise ValueError('punch_through must be true or false')
         if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
                 not isinstance(self.motion_blur, bool) or self.reframe not in craft.REFRAME or
@@ -564,7 +565,7 @@ def punch_moments(timeline, top=.34):
     return sorted(t for score, t in anchored if score >= threshold)[:8]
 
 
-def render_handles(timeline, settings, temporary):
+def render_handles(timeline, settings, temporary, matches=None):
     """Unused source footage just before/after each shot, rendered like the shot itself.
 
     Returns [(pre, post)] with (path, frames) or None. Footage that another shot uses (or that
@@ -577,17 +578,19 @@ def render_handles(timeline, settings, temporary):
         blended = [b != 'cut' for b in timeline.boundary_transitions]
     durations = {}
     look = craft.LOOKS[timeline.look]
-    chain = (f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:'
-             f'out_color_matrix=bt709:out_range=tv,pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,'
-             f'setsar=1,'+(look+',' if look else '')+f'fps={settings.fps},format=yuv444p')
+    matches = matches or ['']*len(timeline.clips)
+    base = (f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:'
+            f'out_color_matrix=bt709:out_range=tv,pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,')
+    tail = (look+',' if look else '')+f'fps={settings.fps},format=yuv444p'
 
     def free(clip, a, b):
         return a >= 0 and b <= durations[clip.source]+1e-6 and all(
             o is clip or o.source != clip.source or b <= o.start+1e-6 or a >= o.start+o.duration-1e-6
             for o in timeline.clips)
 
-    def write(clip, start, name):
+    def write(clip, start, name, match):
         path = Path(temporary)/name
+        chain = base+(match+',' if match else '')+tail
         run(['ffmpeg', '-v', 'error', '-ss', f'{start:.6f}', '-i', clip.source, '-an', '-vf', chain,
              '-frames:v', str(frames)] + LOSSLESS[:6] + ['-threads', '2', str(path)])
         count = int(run(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries',
@@ -598,10 +601,10 @@ def render_handles(timeline, settings, temporary):
         durations.setdefault(clip.source, probe(clip.source)['duration'])
         pre = post = None
         if i and blended[i-1] and free(clip, clip.start-length, clip.start):
-            pre = write(clip, clip.start-length, f'pre-{i:05d}.mkv')
+            pre = write(clip, clip.start-length, f'pre-{i:05d}.mkv', matches[i])
         end = clip.start+clip.duration   # every profile consumes exactly its duration
         if i < len(blended) and blended[i] and free(clip, end, end+length):
-            post = write(clip, end, f'post-{i:05d}.mkv')
+            post = write(clip, end, f'post-{i:05d}.mkv', matches[i])
         result.append((pre, post))
     return result
 
@@ -640,6 +643,11 @@ def render(timeline, output):
         temporary = Path(temporary)
         if timeline.faith_message:
             (temporary/'faith-title.txt').write_text(timeline.faith_message,encoding='utf-8')
+        matches, corrections = ([''] * len(timeline.clips), [None] * len(timeline.clips))
+        if timeline.match_shots:
+            jobs.report(0, 'Matching exposure and colour across shots')
+            matches, corrections = craft.match_filters(
+                [craft.shot_statistics(c.source, c.start, c.duration) for c in timeline.clips])
         for i,clip in enumerate(timeline.clips):
             LOG.info('Rendering clip %d/%d', i+1, len(timeline.clips))
             jobs.report(.75*i/len(timeline.clips), f'Rendering shot {i+1} of {len(timeline.clips)}')
@@ -674,7 +682,7 @@ def render(timeline, output):
             blur=craft.motion_blur_filter() if timeline.motion_blur and clip.speed_profile!='normal' else ''
             video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,'
                           f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
-                          +(look+',' if look else '')+
+                          +(matches[i]+',' if matches[i] else '')+(look+',' if look else '')+
                           f'fps={settings.fps},'+(blur+',' if blur else '')+
                           f'tpad=stop_mode=clone:stop_duration=0.2,trim=duration={clip.duration}')
             if timeline.transition=='zoom':
@@ -699,7 +707,7 @@ def render(timeline, output):
         boundaries = []
         handles = None
         if timeline.transition in BLENDS and len(pieces)>1 and timeline.reframe=='fit':
-            handles = render_handles(timeline, settings, temporary)
+            handles = render_handles(timeline, settings, temporary, matches)
         if timeline.transition in BLENDS and len(pieces)>1:
             LOG.info('Compositing %d transition boundaries',len(pieces)-1)
             jobs.report(.75,'Compositing transitions')
@@ -773,6 +781,7 @@ def render(timeline, output):
                                         ({'beat_punch'} if any(c.accents for c in timeline.clips) else set()))
         report['finishing'] = dict(interpolation=timeline.interpolation, look=timeline.look,
                                    motion_blur=timeline.motion_blur, reframe=timeline.reframe, sfx=timeline.sfx,
+                                   shot_matching=corrections if timeline.match_shots else None,
                                    sfx_count=sum(b.get('effect') in craft.SWISH_EFFECTS for b in boundaries)
                                    if timeline.sfx=='swish' else 0)
         report['music_start'] = timeline.music_start
@@ -869,6 +878,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            interpolation=story.get('interpolation','none'),look=story.get('look','none'),
                            motion_blur=bool(story.get('motion_blur',False)),sfx=story.get('sfx','none'),
                            punch_through=bool(story.get('punch_through',False)),
+                           match_shots=bool(story.get('match_shots',False)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats'):

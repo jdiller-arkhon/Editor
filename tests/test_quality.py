@@ -131,3 +131,43 @@ class AudioPolishTests(unittest.TestCase):
         self.assertGreater(band(b[at], 1000), band(a[at], 1000)*2.5)    # gameplay swells at the moment
         self.assertLess(band(b[at], 220), band(a[at], 220)*.8)          # music dips under it
         self.assertAlmostEqual(band(b[calm], 1000)/band(a[calm], 1000), 1, delta=.1)   # elsewhere unchanged
+
+
+class ShotMatchingTests(unittest.TestCase):
+    def test_dark_and_tinted_shots_move_toward_the_rest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = {}
+            for name, grade in (('a', 'eq=saturation=0.6'), ('b', 'eq=saturation=0.6'),
+                                ('dark', 'eq=saturation=0.6:gamma=0.55'), ('blue', 'eq=saturation=0.6,colorbalance=bm=0.3:rm=-0.2')):
+                path = root/f'{name}.mp4'
+                ffmpeg('-f', 'lavfi', '-i', f'testsrc2=size=160x90:rate=30,{grade}', '-t', '4', '-c:v', 'libx264',
+                       '-pix_fmt', 'yuv444p', '-qp', '0', str(path))
+                sources[name] = path
+            music = root/'music.wav'
+            ffmpeg('-f', 'lavfi', '-i', 'sine=f=220', '-t', '10', str(music))
+            settings = Settings(width=160, height=90, fps=30, quality='draft')
+            clips = [Clip(str(sources[n]), 1, 2, 1) for n in ('a', 'dark', 'b', 'blue')]
+            base = Timeline(1, str(music), settings.__dict__, clips)
+            raw, matched = root/'raw.mp4', root/'matched.mp4'
+            render(base, raw)
+            report = render(replace(base, match_shots=True), matched)
+            corrections = report['finishing']['shot_matching']
+            self.assertGreater(corrections[1]['gamma'], 1.05)          # dark shot brightened
+            self.assertGreater(corrections[3]['tint'][0], 0)            # blue shot: more red ...
+            self.assertLess(corrections[3]['tint'][2], 0)               # ... and less blue
+
+            def stats(path):
+                raw_rgb = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-pix_fmt', 'rgb24', '-f', 'rawvideo',
+                                          'pipe:1'], capture_output=True, check=True).stdout
+                video = np.frombuffer(raw_rgb, np.uint8).reshape(-1, 90, 160, 3).astype(float)
+                return [video[30+60*i].reshape(-1, 3).mean(axis=0) for i in range(4)]
+            before, after = stats(raw), stats(matched)
+            luma = lambda rgb: .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2]
+            reference = np.mean([luma(before[0]), luma(before[2])])
+            self.assertLess(abs(luma(after[1])-reference), .6*abs(luma(before[1])-reference))
+            cast = lambda rgb: rgb[2]-rgb[0]
+            neutral = np.mean([cast(before[0]), cast(before[2])])
+            self.assertLess(abs(cast(after[3])-neutral), abs(cast(before[3])-neutral))   # nudged, not flattened
+            # Shots that already match are left essentially alone.
+            self.assertLess(abs(luma(after[0])-luma(before[0])), 4)

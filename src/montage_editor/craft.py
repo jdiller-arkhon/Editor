@@ -102,3 +102,50 @@ def swish_inputs(boundaries, start_index):
                        f'adelay={delay}:all=1[sfx{n}]')
         labels.append(f'[sfx{n}]')
     return inputs, filters, labels
+
+
+MATCH_STRENGTH = .6          # move 60% of the way toward the montage median
+GAMMA_LIMITS = (.8, 1.25)
+TINT_LIMIT = .05
+TINT_STRENGTH = .35        # colour is often deliberate in games (lit areas), so only nudge it
+
+
+def shot_statistics(path, start, duration, samples=3, width=64, height=36):
+    """Mean luma (0-1) and mean R, G, B (0-1) over a few frames inside the shot."""
+    values = []
+    for k in range(samples):
+        at = start+duration*(k+.5)/samples
+        raw = jobs.run(['ffmpeg', '-v', 'error', '-ss', f'{at:.3f}', '-i', path, '-frames:v', '1', '-vf',
+                        f'scale={width}:{height}', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1']).stdout
+        if len(raw) == width*height*3:
+            values.append(np.frombuffer(raw, np.uint8).reshape(-1, 3).astype(float).mean(axis=0)/255)
+    if not values:
+        return None
+    rgb = np.mean(values, axis=0)
+    return dict(luma=float(.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2]), rgb=[float(v) for v in rgb])
+
+
+def match_filters(statistics):
+    """Bounded per-shot eq/colorbalance filters pulling each shot toward the montage median."""
+    known = [s for s in statistics if s and s['luma'] > .02]
+    if len(known) < 2:
+        return ['' for _ in statistics], [None for _ in statistics]
+    target = float(np.median([s['luma'] for s in known]))
+    ratios = np.median([np.asarray(s['rgb'])/max(np.mean(s['rgb']), 1e-6) for s in known], axis=0)
+    filters, details = [], []
+    for s in statistics:
+        if not s or s['luma'] <= .02:
+            filters.append(''); details.append(None); continue
+        wanted = s['luma']+(target-s['luma'])*MATCH_STRENGTH
+        gamma = float(np.clip(np.log(max(s['luma'], 1e-3))/np.log(min(max(wanted, 1e-3), .999)), *GAMMA_LIMITS))
+        own = np.asarray(s['rgb'])/max(np.mean(s['rgb']), 1e-6)
+        tint = np.clip((ratios-own)*TINT_STRENGTH, -TINT_LIMIT, TINT_LIMIT)
+        parts = []
+        if abs(gamma-1) > .02:
+            parts.append(f'eq=gamma={gamma:.3f}')
+        if np.abs(tint).max() > .01:
+            parts.append(f'colorbalance=rm={tint[0]:.3f}:gm={tint[1]:.3f}:bm={tint[2]:.3f}:'
+                         f'rh={tint[0]:.3f}:gh={tint[1]:.3f}:bh={tint[2]:.3f}')
+        filters.append(','.join(parts))
+        details.append(dict(gamma=round(gamma, 3), tint=[round(float(v), 3) for v in tint]))
+    return filters, details
