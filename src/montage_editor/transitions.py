@@ -2,11 +2,12 @@
 from pathlib import Path
 
 BLENDS = ('cinematic', 'push', 'zoom_blend', 'blur', 'dissolve')
+EFFECTS = ('smoothleft', 'smoothright', 'zoomin', 'hblur', 'fade')
 LOSSLESS = ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'yuv444p',
             '-c:a', 'pcm_s24le', '-threads', '2']
 
 
-def compose(paths, durations, settings, style, seconds, temporary, run):
+def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=None):
     """Replace each cut neighbourhood with a two-image blend of identical duration.
 
     Held edge frames provide transition handles without consuming/repeating source
@@ -14,7 +15,8 @@ def compose(paths, durations, settings, style, seconds, temporary, run):
     """
     fps = settings.fps
     frames = [round(d * fps) for d in durations]
-    halves = [min(max(1, round(seconds * fps / 2)), frames[i] // 3, frames[i+1] // 3)
+    halves = [0 if per_cut and per_cut[i] == 'cut' else
+              min(max(1, round(seconds * fps / 2)), frames[i] // 3, frames[i+1] // 3)
               for i in range(len(paths)-1)]
     pieces, boundaries = [], []
     position = 0
@@ -32,12 +34,17 @@ def compose(paths, durations, settings, style, seconds, temporary, run):
             pieces.append((body, body_frames / fps))
         position += durations[i]
         if not after:
+            if i < len(halves):
+                boundaries.append(dict(at=position, start=position, duration=0, effect='cut',
+                                       handles='none'))
             continue
         half, length = after / fps, 2 * after / fps
         effect = {'push':'smoothleft','zoom_blend':'zoomin','blur':'hblur',
                   'dissolve':'fade'}.get(style)
         if style == 'cinematic':
             effect = ('smoothleft','zoomin','hblur','smoothright')[i % 4]
+        if per_cut:
+            effect = per_cut[i]
         transition = Path(temporary) / f'blend-{i:05d}.mkv'
         graph = (
             f'[0:v]trim=start_frame={frames[i]-after},setpts=PTS-STARTPTS,'

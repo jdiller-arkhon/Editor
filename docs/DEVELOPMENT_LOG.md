@@ -113,3 +113,9 @@
 - Tests: 19 core tests OK (41.9 s) including five new rhythm tests with real FFmpeg decode/render; 7 desktop checks OK, including the new beat-grid status check. Mutation checks confirmed the new tests fail when attack pacing is forced or downbeat phase is shifted.
 - Limitations: no real licensed-music validation; swing, rubato, tempo changes, half-time drops and non-4/4 meter are not modelled; phrase grid is assumed four-bar; no beat/phrase correction UI; gameplay events are still activity heuristics, not semantic.
 - Next: per-boundary transition choice (hard cuts on regular beats, composited blends reserved for phrase boundaries/lifts) without changing old-timeline replay; then real-footage/real-music benchmark.
+
+## 2026-10-02 — Ramps, punch-ins and per-cut transitions (Claude continuation)
+- User asked for Kaiser-level quality. That equivalence cannot be verified here (no frame-level reference study, no user footage); implemented the editorial techniques the generator lacked instead.
+- Added smooth `ramp` speed profile (editing.py), `Clip.accents` beat punch-ins and `Timeline.boundary_transitions` per-cut hard cut/blend choice (transitions.py compose `per_cut`). Excerpts inherit the whole-song grid/energy scale; the first version re-analysed the excerpt alone, lost its first downbeat and mis-numbered bars, and the end-to-end test passed vacuously with no effect applied until fixed.
+- Measured: rendered ramp frames follow the planned source clock within 60 ms (luma-encoded clock), unramped would be 0.25+ s off; punch frames differ strongly on the accent and return to the plain render after it; a 'cut' boundary has no blended frame while the next 'smoothleft' frame shows both shots.
+- Tests: 24 core tests OK (51.5 s), 7 desktop checks OK.

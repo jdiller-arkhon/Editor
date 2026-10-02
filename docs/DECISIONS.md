@@ -50,3 +50,11 @@ The attack planner remains the fallback and the analysis sidecar records which p
 No Timeline schema change: replay of existing projects is unaffected. Onset times gained a fixed
 latency compensation (half analysis window plus one hop): onsets are now reported ~42 ms later
 than before, closer to the true attack; this was calibrated on synthetic attacks, not real music.
+
+## 2026-10-02 — Hard cuts by default, blends where the music turns
+
+Top montage edits are mostly hard cuts on the beat, with transitions, speed ramps and camera
+accents reserved for musical events. In cinematic beat mode the director now chooses per cut and
+per shot from measured phrase marks and energy rather than applying one effect to every boundary.
+Smooth ramps replace stepped ones for new edits; the stepped profile stays valid for replay. These
+choices are rules derived from the measured music, not a study of any specific creator's work.

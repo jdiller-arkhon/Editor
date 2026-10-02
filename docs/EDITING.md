@@ -25,6 +25,27 @@ measured lift or a loud four-bar boundary, never twice in a row; desired candida
 follows song intensity, calmer at the end for the closing line. The automatic excerpt starts on
 a phrase mark/downbeat of the whole song when its grid is confident.
 
+### Editing craft in beat mode (cinematic profile)
+
+- **Smooth speed ramps** (`ramp` profile): speed follows 1 + 0.5·cos(2πt/D), easing from 1.5× at the
+  shot edges to 0.5× at its centre, sampled at 16 piecewise-linear knots and rendered with a single
+  inverted `setpts` mapping (audio: 16 `atempo` pieces). Source consumed equals output duration and
+  anchors use the exact rendered mapping. Placed on shots starting at measured lifts or loud phrase
+  turns, never twice in a row. Frames are duplicated, not interpolated: 0.5× of 30 fps footage holds
+  each frame twice; 60 fps sources stay fluid. The legacy stepped `impact` profile remains for
+  attack-mode edits and saved projects.
+- **Beat punch-ins** (`Clip.accents`): on loud, real-time shots a +7% punch-in with a small decaying
+  shake starts on interior downbeats, or the mid-bar beat of one-bar shots, and decays to exactly
+  zoom 1 within 0.6 s (zoompan is only an identity at exactly 1; a never-quite-zero exponential
+  softened every later frame).
+- **Per-cut transitions** (`Timeline.boundary_transitions`): ordinary beats are hard cuts; a measured
+  lift gets a zoom-through, four-bar turns alternate left/right pushes, energy falls dissolve. Only
+  applied when the user's style is `cinematic` and beat pacing was used; other styles stay uniform.
+- **Excerpt grid**: an automatic excerpt inherits the whole-song beat/bar/phrase grid and energy scale
+  (shifted), so bar numbering and "how loud is this" are judged against the whole song.
+
+Both new fields default to empty, so older timelines load and replay unchanged.
+
 The validation report's `music_alignment` gives the pacing mode, tempo, confidence and the
 share of cuts on beats/downbeats/attacks plus phrase boundaries cut. Tests use decoded
 synthetic tracks with known ground truth (≤20 ms beat error at 90/128/150 BPM, correct

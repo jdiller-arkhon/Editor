@@ -134,10 +134,10 @@ class BeatDirectorTests(unittest.TestCase):
         self.assertGreater(np.mean(quiet), np.mean(loud)+.8)
         # The impact ramp lands on the measured lift, not on a fixed shot count.
         lift = music['phrases'][1]['time']
-        impacts = [s for s, c in zip(starts, timeline.clips) if c.speed_profile == 'impact']
+        impacts = [s for s, c in zip(starts, timeline.clips) if c.speed_profile == 'ramp']
         self.assertTrue(any(abs(s-lift) <= .5/settings.fps for s in impacts))
         for a, b in zip(timeline.clips, timeline.clips[1:]):
-            self.assertFalse(a.speed_profile == b.speed_profile == 'impact')
+            self.assertFalse(a.speed_profile == b.speed_profile == 'ramp')
         anchored = [c for c in timeline.clips if c.anchor_output is not None]
         self.assertTrue(anchored)
         for clip, start in zip(timeline.clips, starts):
@@ -167,7 +167,7 @@ class BeatRenderTests(unittest.TestCase):
             settings = Settings(width=160, height=90, fps=30, duration=10, quality='draft')
             report = create_montage([video], song, output, settings,
                                     story=dict(auto_music_section=True, edit_profile='cinematic',
-                                               transition='cut'))
+                                               transition='cinematic', transition_duration=.4))
             self.assertTrue(report['full_decode'])
             self.assertAlmostEqual(report['duration'], 10, delta=.1)
             # The excerpt begins on a measured downbeat of the full song.
@@ -180,7 +180,26 @@ class BeatRenderTests(unittest.TestCase):
             for clip in timeline.clips[:-1]:
                 position += clip.duration
                 self.assertLess(grid_error([position], 128, .3)[0], .5/30+.02)
+            # Hard cuts on ordinary beats; blends only on phrase marks of the excerpt.
+            effects = [b['effect'] for b in report['transition_boundaries']]
+            self.assertEqual(effects, timeline.boundary_transitions)
+            self.assertIn('cut', effects)
             analysis = json.loads(output.with_suffix('.analysis.json').read_text())
+            marks = [p['time'] for p in analysis['music']['phrases']]
+            position = 0
+            for clip, effect in zip(timeline.clips, effects):
+                position += clip.duration
+                if effect != 'cut':
+                    self.assertTrue(any(abs(position-t) <= .5/30+1e-6 for t in marks))
+            starts = np.cumsum([0]+[c.duration for c in timeline.clips[:-1]])
+            accents = [(c, start+a) for c, start in zip(timeline.clips, starts) for a in c.accents]
+            self.assertTrue(accents)
+            self.assertIn('ramp', report['edit_effects'])
+            self.assertIn('beat_punch', report['edit_effects'])
+            self.assertTrue(any(e != 'cut' for e in effects))
+            for clip, at in accents:
+                self.assertEqual(clip.speed_profile, 'normal')
+                self.assertLess(min(abs(at-d) for d in analysis['music']['beats']), .5/30+1e-6)
             self.assertEqual(analysis['music']['source_start'], report['music_start'])
             self.assertAlmostEqual(analysis['music']['tempo_bpm'], 128, delta=.5)
 

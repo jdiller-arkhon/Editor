@@ -1,5 +1,5 @@
 """Local heuristic analysis, deterministic direction and verified CPU rendering."""
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 import logging
 import os
@@ -12,10 +12,10 @@ import numpy as np
 
 from .config import Settings
 from .storytelling import DialogueCue
-from .editing import retime_filters, source_offset
-from .transitions import BLENDS, LOSSLESS, compose
+from .editing import PROFILES, retime_filters, source_offset
+from .transitions import BLENDS, EFFECTS, LOSSLESS, compose
 from .music_sections import choose_section
-from .rhythm import alignment_report, beat_grid, plan_cuts, usable as rhythm_usable
+from .rhythm import alignment_report, beat_grid, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
 
@@ -148,6 +148,8 @@ class Clip:
     speed_profile: str = 'normal'
     anchor_source: float | None = None
     anchor_output: float | None = None
+    # Output-relative beat accents: a short punch-in zoom with a decaying shake.
+    accents: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,8 @@ class Timeline:
     music_gain: float = 1
     normalize_audio: bool = False
     music_start: float = 0
+    # Per-cut transition overrides ('cut' or an EFFECTS name); empty applies ``transition``.
+    boundary_transitions: list = field(default_factory=list)
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -179,16 +183,25 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
+        if self.boundary_transitions:
+            if len(self.boundary_transitions)!=len(self.clips)-1 or not all(
+                    b=='cut' or b in EFFECTS for b in self.boundary_transitions):
+                raise ValueError('Invalid per-cut transitions')
+            if self.transition not in BLENDS:
+                raise ValueError('Per-cut transitions require a composited transition style')
         for cue in self.dialogue:
             cue.validate(sum(c.duration for c in self.clips))
         for clip in self.clips:
-            if clip.speed_profile not in ('normal','impact'):raise ValueError('Unknown speed profile')
+            if clip.speed_profile not in PROFILES:raise ValueError('Unknown speed profile')
             if (clip.anchor_source is None)!=(clip.anchor_output is None):raise ValueError('Incomplete event anchor')
             if clip.anchor_source is not None:
                 if not np.isfinite(clip.anchor_source) or not np.isfinite(clip.anchor_output):raise ValueError('Invalid event anchor')
                 if not clip.start<=clip.anchor_source<=clip.start+clip.duration or not 0<=clip.anchor_output<=clip.duration:raise ValueError('Event anchor outside clip')
                 mapped=clip.start+source_offset(clip.anchor_output,clip.duration,clip.speed_profile)
                 if abs(mapped-clip.anchor_source)>1e-5:raise ValueError('Event anchor does not match retiming')
+            if len(clip.accents)>32 or not all(isinstance(a,(int,float)) and np.isfinite(a) and
+                                               0<a<clip.duration for a in clip.accents):
+                raise ValueError('Beat accents must lie inside the clip')
             if not all(np.isfinite(v) for v in (clip.start, clip.duration, clip.score)):
                 raise ValueError('Non-finite timeline value')
             if clip.start < 0 or clip.duration <= 0:
@@ -223,7 +236,7 @@ def _attack_segments(music, settings, duration, cinematic):
         target=min(interior,key=lambda t:abs(t-length*.5)) if interior else length*.5
         phase = position/max(duration,1e-6)
         desired = .4 if phase < .2 else (.95 if phase < .8 else .35)
-        segments.append((length,profile,target,desired))
+        segments.append((length,profile,target,desired,[]))
         position += length
     return segments
 
@@ -239,12 +252,21 @@ def _beat_segments(music, settings, duration, cinematic):
     for length, tags in plan:
         starts = tags['starts_phrase']
         lifted = 'rise' in starts or ('grid' in starts and tags['energy'] >= .5)
-        profile = 'impact' if (cinematic and lifted and not previous_impact and length >= 1) else 'normal'
-        previous_impact = profile == 'impact'
+        profile = 'ramp' if (cinematic and lifted and not previous_impact and length >= 1) else 'normal'
+        previous_impact = profile == 'ramp'
+        # Punch in on interior downbeats of loud, real-time shots; the ramp carries its own feel.
+        accents = []
+        if cinematic and profile == 'normal' and tags['energy'] >= .6:
+            # Interior downbeats; a one-bar shot punches on the mid-bar (backbeat) beat instead.
+            accents = [t for t in tags['interior_downbeats'] if .25 <= t <= length-.25]
+            middle = [t for t in tags['interior_beats'] if .25 <= t <= length-.25]
+            if not accents and middle:
+                accents = [min(middle, key=lambda t: abs(t-length/2))]
+            accents = [round(t,4) for t in accents]
         phase = tags['start']/max(duration,1e-6)
         # Match gameplay activity to musical intensity; leave the ending calmer for the title.
         desired = .35 if phase >= .85 else .3+.65*tags['energy']
-        segments.append((length,profile,tags['anchor'],desired))
+        segments.append((length,profile,tags['anchor'],desired,accents))
     return segments
 
 
@@ -257,7 +279,7 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
     music['cut_mode'] = 'beats' if planner is _beat_segments else 'attacks'
     clips = []
     used = {c['source']: [] for c in ranked}
-    for length,profile,target,desired in planner(music, settings, duration, cinematic):
+    for length,profile,target,desired,accents in planner(music, settings, duration, cinematic):
         offset=source_offset(target,length,profile)
         choice = None
         shot_pool = ranked
@@ -293,7 +315,7 @@ def direct(candidates, music, music_path, settings, duration, ordered=False, cin
         candidate,start = choice
         anchored=abs(start+offset-candidate['time'])<=1e-5
         clips.append(Clip(candidate['source'],start,length,candidate['score'] if anchored else 0,profile,
-                          candidate['time'] if anchored else None,target if anchored else None))
+                          candidate['time'] if anchored else None,target if anchored else None,accents))
         used[candidate['source']].append((start, start+length))
     if not clips:
         raise ValueError('Source clips are too short for the selected cut length')
@@ -327,6 +349,22 @@ def validate_output(path, settings, expected_duration):
             'height': video['height'], 'fps': numerator/denominator,
             'video_codec': video['codec_name'], 'audio_codec': audios[0]['codec_name'],
             'full_decode': True}
+
+
+def accent_filter(accents, settings):
+    """Punch-in zoom (+7%) and a small decaying shake starting on each accent time.
+
+    ``on`` is the output frame index; each pulse decays with a 120 ms time constant over 0.6 s.
+    """
+    fps = settings.fps
+    # Each pulse ends exactly at zero after 0.6 s: zoompan is only an identity at zoom == 1.
+    pulse = '+'.join(f'between(on/{fps}-{a:.4f},0,0.6)*(exp(-(on/{fps}-{a:.4f})/0.12)-exp(-5))/(1-exp(-5))'
+                     for a in accents)
+    zoom = f'1+0.07*min(1,{pulse})'
+    shake = f'0.012*iw*min(1,{pulse})*sin(on*2.1)'
+    return (f",zoompan=z='{zoom}':x='max(0,min(iw-iw/zoom,iw/2-iw/zoom/2+{shake}))':"
+            f"y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2+{shake.replace('iw','ih').replace('2.1','1.7')}))':"
+            f"d=1:s={settings.width}x{settings.height}:fps={fps}")
 
 
 def render(timeline, output):
@@ -387,6 +425,8 @@ def render(timeline, output):
                 decay=max(1,min(timeline.transition_duration,clip.duration/2)*settings.fps/2)
                 video_filter+=(f",zoompan=z='1+0.06*(exp(-on/{decay})+exp(-({frames}-on)/{decay}))':"
                                f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={settings.width}x{settings.height}:fps={settings.fps}")
+            if clip.accents:
+                video_filter+=accent_filter(clip.accents,settings)
             graph.append('[vret]'+video_filter+transition_filter+title_filter+'[vout]')
             if has_audio:
                 graph.append(f'[aret]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration={clip.duration}[aout]')
@@ -400,7 +440,8 @@ def render(timeline, output):
         if timeline.transition in BLENDS and len(pieces)>1:
             LOG.info('Compositing %d transition boundaries',len(pieces)-1)
             pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
-                                        timeline.transition,timeline.transition_duration,temporary,run)
+                                        timeline.transition,timeline.transition_duration,temporary,run,
+                                        timeline.boundary_transitions or None)
         listing = temporary/'clips.txt'
         listing.write_text(''.join(f"file '{path.name}'\nduration {length:.9f}\n" for path,length in pieces))
         pending = temporary/'final.mp4'
@@ -451,7 +492,8 @@ def render(timeline, output):
                       '-movflags', '+faststart', str(pending)])
         report = validate_output(pending, settings, duration)
         report['audio_mastering'] = 'measured two-pass loudnorm' if timeline.normalize_audio else 'peak limiter'
-        report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips})
+        report['edit_effects'] = sorted({c.speed_profile for c in timeline.clips} |
+                                        ({'beat_punch'} if any(c.accents for c in timeline.clips) else set()))
         report['music_start'] = timeline.music_start
         report['transition'] = timeline.transition
         report['transition_boundaries'] = boundaries
@@ -499,6 +541,9 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
             starts = phrases if any(t <= song['duration']-duration for t in phrases) else whole['downbeats']
         music_start = choose_section(whole['energy'],song['duration'],duration,starts=starts)
     analysis = music_analysis(song, duration, start=music_start)
+    if story and story.get('auto_music_section') and rhythm_usable(whole):
+        analysis.update(excerpt_grid(whole, music_start, duration))
+        analysis['cut_mode'] = 'beats'
     candidates = []
     for source in sources:
         LOG.info('Analyzing %s', source['path'])
@@ -512,18 +557,17 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         ai_plan = {'provider':'ollama','model':ai_model,'plan':plan,
                    'evidence':'motion/audio metadata only; no visual semantic analysis'}
     timeline = direct(candidates, analysis, song['path'], settings, duration, ordered=bool(ai_model),cinematic=bool(story and story.get('edit_profile')=='cinematic'))
-    from dataclasses import replace
     timeline = replace(timeline,music_start=music_start)
     if ai_plan:
-        from dataclasses import replace
         timeline = replace(timeline,transition=plan['transition'],transition_duration=plan['transition_duration'])
     if story is not None:
-        from dataclasses import replace
         timeline = replace(timeline, dialogue=[DialogueCue(**c) for c in story.get('dialogue', [])],
                            transition=story.get('transition', timeline.transition) if not ai_model else timeline.transition,
                            transition_duration=story.get('transition_duration', timeline.transition_duration) if not ai_model else timeline.transition_duration,
                            faith_message=story.get('faith_message',''),gameplay_gain=story.get('gameplay_gain',0),
                            music_gain=story.get('music_gain',1),normalize_audio=story.get('normalize_audio',False))
+    if timeline.transition == 'cinematic' and analysis.get('cut_mode') == 'beats':
+        timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
     report = render(timeline, output)
     timeline.save(sidecars[0])
     sidecars[1].write_text(json.dumps({'music': analysis, 'candidates': candidates, 'ai_director': ai_plan}, indent=2))

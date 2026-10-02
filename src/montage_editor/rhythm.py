@@ -139,6 +139,28 @@ def beat_grid(onset, low_onset, energy, hop=.01, energy_hop=.05, latency=0.0):
                 downbeat_confidence=round(downbeat_confidence, 3), method=METHOD)
 
 
+def smoothed_energy(energy, hop):
+    energy = np.asarray(energy, dtype=float)
+    width = max(1, int(round(1/hop)))
+    return np.convolve(energy, np.ones(width)/width, mode='same') if len(energy) else energy
+
+
+def excerpt_grid(whole, start, duration):
+    """Shift a whole-song grid into excerpt time, keeping its bar/phrase numbering and
+    its energy scale (an excerpt re-analysed alone loses edge beats and calls a
+    uniformly loud chorus 'medium')."""
+    inside = lambda t: -1e-6 <= t-start <= duration+1e-6
+    shift = lambda t: round(float(t-start), 4)
+    smooth = smoothed_energy(whole['energy'], whole.get('hop_seconds', .05))
+    return dict(beats=[shift(t) for t in whole['beats'] if inside(t)],
+                downbeats=[shift(t) for t in whole['downbeats'] if inside(t)],
+                bars=[dict(b, start=shift(b['start'])) for b in whole['bars'] if inside(b['start'])],
+                phrases=[dict(p, time=shift(p['time'])) for p in whole['phrases'] if inside(p['time'])],
+                tempo_bpm=whole['tempo_bpm'], beat_confidence=whole['beat_confidence'],
+                beat_evidence=dict(whole['beat_evidence'], source='whole-song grid shifted to excerpt'),
+                energy_reference=[float(np.quantile(smooth, .05)), float(np.quantile(smooth, .95))])
+
+
 def usable(music):
     return bool(music.get('beats')) and music.get('beat_confidence', 0) >= MINIMUM_CONFIDENCE
 
@@ -160,9 +182,9 @@ def plan_cuts(music, settings, duration):
     energy = np.asarray(music.get('energy', []), dtype=float)
     hop = music.get('hop_seconds', .05)
     if len(energy):
-        width = max(1, int(round(1/hop)))
-        energy = np.convolve(energy, np.ones(width)/width, mode='same')
-        floor, scale = float(np.quantile(energy, .05)), float(np.quantile(energy, .95))
+        energy = smoothed_energy(energy, hop)
+        floor, scale = music.get('energy_reference') or (float(np.quantile(energy, .05)),
+                                                         float(np.quantile(energy, .95)))
     span = settings.maximum_clip-settings.minimum_clip
 
     def level(a, b):
@@ -217,6 +239,10 @@ def plan_cuts(music, settings, duration):
         plan.append((length, dict(start=round(start, 4), energy=round(level(start, end), 3),
                                   on_beat=j < len(times)-1, on_downbeat=near(downbeats, end),
                                   phrase=kinds_at(end), starts_phrase=kinds_at(start),
+                                  interior_downbeats=[float(b-start) for b in downbeats
+                                                      if start+tolerance < b < end-tolerance],
+                                  interior_beats=[float(b-start) for b in beats
+                                                  if start+tolerance < b < end-tolerance],
                                   anchor=min(pool, key=lambda b: abs(b-length*.5)) if pool else length*.5)))
     return plan
 
@@ -246,3 +272,26 @@ def alignment_report(timeline, music):
                 phrase_boundaries_cut=f'{len(hit)}/{len(reachable)}',
                 tempo_bpm=music.get('tempo_bpm'), beat_confidence=music.get('beat_confidence'))
 
+
+def boundary_styles(timeline, music):
+    """Hard cuts on ordinary beats; composited blends only where the music turns.
+
+    Lifts get a zoom-through, four-bar phrase turns alternate directional pushes,
+    energy falls dissolve. Every choice is tied to a measured or labelled phrase mark.
+    """
+    tolerance = .5/timeline.settings['fps']+1e-6
+    styles, position, pushes = [], 0.0, 0
+    for clip in timeline.clips[:-1]:
+        position += clip.duration
+        kinds = next((p['kinds'] for p in music.get('phrases', [])
+                      if abs(p['time']-position) <= tolerance), [])
+        if 'rise' in kinds:
+            styles.append('zoomin')
+        elif 'fall' in kinds:
+            styles.append('fade')
+        elif 'grid' in kinds:
+            styles.append(('smoothleft', 'smoothright')[pushes % 2])
+            pushes += 1
+        else:
+            styles.append('cut')
+    return styles
