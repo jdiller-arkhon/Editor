@@ -578,11 +578,12 @@ def _slot_lines(timeline, music):
 # Local director: the same prompts, schemas, validation and edit execution, served by a
 # vision model running in Ollama on this machine. Footage never leaves the computer.
 
-LOCAL_MODEL = 'qwen2.5vl:7b'
+LOCAL_MODEL = 'qwen3.5:9b'   # best of the models measured here; see local_ai.RECOMMENDED
 LOCAL_HOST = 'http://127.0.0.1:11434'
 # Share of a reviewed moment's score taken from the local model; the rest stays the measured
-# activity score. Measured on Xonotic strips (CPU, Q4): qwen2.5vl:7b labelled a death screen
-# correctly but called a real fight "movement" with highlight 0, so it does not get the last word.
+# activity score. Measured on hand-labelled Xonotic strips (CPU, Q4): even the best model here
+# (qwen3.5:9b, checklist prompt) separates fights from walking imperfectly (AUC 0.70), so it does
+# not get the last word.
 LOCAL_WEIGHT = .6
 
 
@@ -743,7 +744,18 @@ class LocalDirector(ClaudeDirector):
                     if attempt == 2:
                         raise
             moments.update({offset+i: m for i, m in local.items()})
+        # Guard: a model that calls most moments menus/scoreboards is misreading the HUD itself
+        # (measured: gemma4:e4b flagged 16/16 strips). Its usability flags are then ignored and those
+        # moments keep their measured activity score; the HUD detector still removes real death screens.
+        flagged = [i for i, m in moments.items() if not m['usable']]
+        distrusted = len(pool) >= 4 and len(flagged) > 2*len(pool)/3
+        if distrusted:
+            for i in flagged:
+                moments[i] = dict(moments[i], usable=True, event='other',
+                                  highlight=int(round(10*min(1.0, max(0.0, pool[i]['score'])))),
+                                  note='(model flagged most clips as overlays; flag ignored) '+moments[i]['note'][:150])
         report = dict(provider='ollama (local)', model=self.model, reviewed=len(pool), images_sent=len(pool),
+                      usability_ignored=len(flagged) if distrusted else 0,
                       frames_per_image=STRIP_FRAMES, seconds=round(seconds, 1),
                       usable=sum(m['usable'] for m in moments.values()),
                       events={e: sum(m['event'] == e for m in moments.values()) for e in EVENTS

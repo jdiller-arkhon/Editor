@@ -29,7 +29,7 @@ from test_vision_director import judge
 class FakeOllama:
     """Minimal /api/version, /api/tags, /api/show, /api/pull and /api/chat."""
 
-    def __init__(self, models=('qwen2.5vl:7b',), vision=('qwen2.5vl:7b',), delay=0.0, reply=None):
+    def __init__(self, models=('qwen3.5:9b',), vision=('qwen3.5:9b',), delay=0.0, reply=None):
         self.models, self.vision, self.delay, self.reply = list(models), set(vision), delay, reply
         self.received = threading.Event()
         self.queued = []        # one-off replies served before the normal answers
@@ -138,7 +138,7 @@ class LocalDirectorTests(unittest.TestCase):
             candidates, report = LocalDirector(host=self.ollama.host, batch=2).review(self.candidates(), 'Hopeful')
         self.assertEqual(len(self.ollama.chats), 3)                      # 5 moments in batches of 2
         first = self.ollama.chats[0]
-        self.assertEqual(first['model'], 'qwen2.5vl:7b')
+        self.assertEqual(first['model'], 'qwen3.5:9b')
         self.assertFalse(first['stream'])
         self.assertEqual(first['messages'][0]['content'], CHECK_SYSTEM)  # a checklist, not one holistic grade
         item = first['format']['properties']['moments']['items']
@@ -161,7 +161,7 @@ class LocalDirectorTests(unittest.TestCase):
         self.assertIn('rocket fire', by_time[.8]['ai_note'])
         self.assertAlmostEqual(by_time[.8]['score'], .6*1.0+.4*.8)
         self.assertAlmostEqual(by_time[.6]['score'], .6*1.0+.4*.6)
-        self.assertEqual(by_time[.8]['judged_by'], 'local vision review (qwen2.5vl:7b)')
+        self.assertEqual(by_time[.8]['judged_by'], 'local vision review (qwen3.5:9b)')
 
     def test_local_director_directs_and_renders_a_real_montage(self):
         song, output = self.root/'song.wav', self.root/'local.mp4'
@@ -180,7 +180,7 @@ class LocalDirectorTests(unittest.TestCase):
         review = analysis['ai_editor']['cut_review']
         self.assertNotIn('error', review)
         self.assertTrue(REVIEW_SYSTEM in systems or review['notes'] == 'no unused alternates')
-        self.assertEqual(analysis['ai_editor']['edit_plan']['model'], 'qwen2.5vl:7b')
+        self.assertEqual(analysis['ai_editor']['edit_plan']['model'], 'qwen3.5:9b')
 
     def test_playbook_is_enforced_whatever_the_model_says(self):
         levels, marks = [.3, .5, .6, 1.0, .8, .2], [[], ['phrase'], [], ['drop'], [], []]
@@ -220,6 +220,22 @@ class LocalDirectorTests(unittest.TestCase):
         # Malformed answers are passed on as invalid, never guessed.
         with self.assertRaises(ValueError):
             validate_review(dict(moments=[checklist_moment(dict(walk, highlight='high'))]), 1)
+
+    def test_a_model_that_flags_everything_is_not_trusted_to_delete_footage(self):
+        everything = {'done_reason': 'stop', 'message': {'content': json.dumps(dict(moments=[
+            dict(id=i, observations='HUD over the game.', overlay_frames=[1, 2, 3], enemy_visible=False, firing=False,
+                 kill=False, peak_frame=2, highlight=2) for i in range(5)]))}}
+        self.ollama.reply = everything
+        candidates, report = LocalDirector(host=self.ollama.host, batch=5).review(self.candidates())
+        self.assertEqual(report['usability_ignored'], 5)
+        self.assertFalse(any(c.get('exclude') for c in candidates))
+        by_time = {round(c['activity_score'], 1): c for c in candidates}
+        self.assertAlmostEqual(by_time[.9]['score'], .9)              # falls back to the measured activity
+        # A minority of flags (a real scoreboard among gameplay) is still trusted.
+        self.ollama.reply = None
+        candidates, report = LocalDirector(host=self.ollama.host, batch=5).review(self.candidates())
+        self.assertEqual(report['usability_ignored'], 0)
+        self.assertEqual(sum(bool(c.get('exclude')) for c in candidates), 1)
 
     def test_failures_are_explained_and_hosts_are_local_only(self):
         with self.assertRaisesRegex(ValueError, 'only talks to Ollama on this computer'):
@@ -266,8 +282,8 @@ class LocalDirectorTests(unittest.TestCase):
         self.ollama.models.append('llama3.2:3b')
         state = local_ai.status(host)
         self.assertEqual((state['running'], state['version']), (True, '0.test'))
-        self.assertEqual(state['vision_models'], ['qwen2.5vl:7b'])
-        self.assertTrue(local_ai.readiness('qwen2.5vl:7b', host)[0])
+        self.assertEqual(state['vision_models'], ['qwen3.5:9b'])
+        self.assertTrue(local_ai.readiness('qwen3.5:9b', host)[0])
         ready, message = local_ai.readiness('llama3.2:3b', host)
         self.assertFalse(ready); self.assertIn('cannot see images', message)
         ready, message = local_ai.readiness('qwen2.5vl:3b', host)
@@ -282,7 +298,7 @@ class LocalDirectorTests(unittest.TestCase):
         self.assertEqual(len(self.ollama.pulls), 1)
         stopped = local_ai.status('http://127.0.0.1:9')
         self.assertFalse(stopped['running'])
-        self.assertIn('not running', local_ai.readiness('qwen2.5vl:7b', 'http://127.0.0.1:9')[1])
+        self.assertIn('not running', local_ai.readiness('qwen3.5:9b', 'http://127.0.0.1:9')[1])
 
 
 @unittest.skipUnless(os.environ.get('DRIFT_LIVE_OLLAMA'), 'live local-model check: set DRIFT_LIVE_OLLAMA=<model>')

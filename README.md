@@ -77,13 +77,30 @@ The desktop uses layered graphite panels, restrained architectural texture, clea
 
 The default director runs a **local vision model in [Ollama](https://ollama.com/download)**: frames of your footage never leave the computer (loopback only, no proxy, no redirects). In the desktop choose **AI director → Local AI director** (the default), press **Set up local AI** once (checks Ollama and downloads the model through it with progress and cancel), then Create. CLI: `create --director auto|local|claude|activity --local-model qwen2.5vl:7b`; `doctor` reports whether Ollama is running and which installed models can see images.
 
-The local model watches six-frame strips of candidate moments (batched, one answer per strip enforced by the schema, retried once), assigns moments, slow motion, punch-ins and transitions to the beat slots, and reviews the cut. The engine then **enforces an editing playbook** whatever the model says: a strong opener, the strongest moment on the drop, hard cuts on the beat with transitions only into a new phrase/build/drop, dissolve only into the final shot, slow motion in at most one shot in four and never back to back, no punch-ins on calm music, and a clean final shot. Directional pushes then follow the measured camera pan, and slow-motion hits get impact frames (a two-frame flash and shake).
+The local model watches six-frame strips of candidate moments and answers a **checklist** per strip (which frames are covered by a scoreboard/menu, is an opponent visible, is there gunfire or explosions, does an opponent die, the peak frame, a highlight score); the engine turns those answers into judgements. It then assigns moments, slow motion, punch-ins and transitions to the beat slots and reviews the cut. The engine **enforces an editing playbook** whatever the model says: a strong opener, the strongest moment on the drop, hard cuts on the beat with transitions only into a new phrase/build/drop, dissolve only into the final shot, slow motion in at most one shot in four and never back to back, no punch-ins on calm music, and a clean final shot. Directional pushes follow the measured camera pan, slow-motion hits get impact frames, and loud downbeats get beat FX.
 
-Measured honestly: on this CPU-only development machine qwen2.5vl:7b took about 130 s per strip and called a real fight "movement"; qwen2.5vl:3b took 13–70 s and is less reliable. Local judgements are therefore blended 60/40 with the measured activity score rather than replacing it. A GPU with ~8 GB is recommended for the 7B model. Claude (cloud, opt-in) remains available under the same menu; the activity engine needs no AI at all.
+Measured on 16 hand-labelled strips from a held-out Xonotic duel (CPU only, so speeds are slow; a GPU is much faster):
+
+| Model (checklist prompt) | Death screens caught | False flags | Fight vs walking (AUC) | Per strip |
+|---|---|---|---|---|
+| **qwen3.5:9b** (default) | 4/5 | 0 | 0.70 | 43 s |
+| qwen2.5vl:7b (previous default) | 0/5 | 0 | 0.70 | 89 s |
+| gemma4:e4b | 5/5 | 11 | 0.37 | 25 s |
+| activity heuristic alone | — | — | 0.63 | — |
+
+The same qwen3.5:9b with the earlier single-judgement prompt caught 1/5 death screens (AUC 0.58), which is why the checklist exists. Local judgements are blended 60/40 with the measured activity score, and if a model marks more than two-thirds of the clips as overlays (as gemma4:e4b did) its flags are ignored rather than deleting footage. Larger models (qwen3.5:27b and newer) were not measured here. Claude (cloud, opt-in) remains available under the same menu; the activity engine needs no AI at all.
+
+## Output and delivery
+
+- **Every format from one edit**: *Export every format* (or `render TIMELINE --output X --formats youtube-1080p30,shorts-1080x1920,instagram-1080x1350`) delivers the same cut as 16:9, 9:16 and 4:5 with action-following crops, each fully decoded and validated.
+- **Platform loudness**: automatic montages master to −14 LUFS (`target_lufs`), the level YouTube, TikTok and Instagram normalise to; older timelines keep −16.
+- **Beat FX**: on drops and downbeats in the loudest quarter of the song, an exposure pulse, a three-frame RGB split and a shake (`pulses`, default empty).
+- **Kinetic closing title** and a **Film** look (cinematic grade with fine grain).
+- **Speed**: independent FFmpeg work (shot renders, transition handles, blends, colour statistics, gameplay analysis) runs concurrently, one job per core up to 8 (`DRIFT_WORKERS` overrides), hard-cut shots are no longer re-encoded before assembly, and the final H.264 encode uses every core. On the 4-core development machine the same 30 s 1080p montage of two real Xonotic sources went from 569 s to 276 s with an identical timeline; parallel analysis is tested identical to sequential.
 
 ## Director chat
 
-The **Director chat** panel lets you talk to the director in plain words ("make it faster", "45 seconds with a punchy look, then show me", "use this song: <link>", "swap shot 4"). It answers and changes the edit only through validated actions that drive the same controls you see (pace, length, look, tone, closing line, brief, song, export format, slow motion, swishes, blur, move/swap shot, preview/create/final). Unknown values, impossible shots and **actions on topics you did not mention are rejected and shown** — a live test of the 3B model tried to swap the song unasked. It runs on the local model by default, or Claude when Claude is the chosen director.
+The **Director chat** panel lets you talk to the director in plain words ("make it faster", "45 seconds with a punchy look, then show me", "use this song: <link>", "swap shot 4"). It answers and changes the edit only through validated actions that drive the same controls you see (pace, length, look, tone, closing line, brief, song, export format, slow motion, swishes, blur, move/swap shot, preview/create/final). Unknown values, impossible shots and **actions on topics you did not mention are rejected and shown** — a live test of the 3B model tried to swap the song unasked. When you ask for feedback ("how is it?", "which shot is weakest?") the director also sees a contact sheet of the current shots. It runs on the local model by default, or Claude when Claude is the chosen director.
 
 ## Simple mode: drop, song, create
 

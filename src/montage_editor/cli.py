@@ -42,7 +42,7 @@ def main():
     create.add_argument('--director', choices=['auto', 'local', 'claude', 'activity'], default='auto',
                         help='auto (default): the local vision AI when Ollama has the model, otherwise the activity '
                              'engine; local: require the local AI; claude: send frames to Claude; activity: no AI')
-    create.add_argument('--local-model', default=None, help='Ollama vision model for the local director (default qwen2.5vl:7b)')
+    create.add_argument('--local-model', default=None, help='Ollama vision model for the local director (default qwen3.5:9b)')
     create.add_argument('--ollama-model', help='Legacy text-only Ollama planner (motion/audio numbers, no vision)')
     create.add_argument('--claude-editor', action='store_true', help='Same as --director claude')
     create.add_argument('--claude-model', default=None, help='Override the Claude model for --claude-editor')

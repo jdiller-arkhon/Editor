@@ -20,19 +20,21 @@ def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=
     halves = [0 if per_cut and per_cut[i] == 'cut' else
               min(max(1, round(seconds * fps / 2)), frames[i] // 3, frames[i+1] // 3)
               for i in range(len(paths)-1)]
-    pieces, boundaries = [], []
+    pieces, boundaries, work = [], [], []
     position = 0
     for i, path in enumerate(paths):
         before = halves[i-1] if i else 0
         after = halves[i] if i < len(halves) else 0
         body_frames = frames[i] - before - after
-        if body_frames > 0:
+        if body_frames > 0 and not before and not after:
+            pieces.append((Path(path), durations[i]))    # hard cuts on both sides: use the shot as rendered
+        elif body_frames > 0:
             body = Path(temporary) / f'body-{i:05d}.mkv'
             graph = (f'[0:v]trim=start_frame={before}:end_frame={frames[i]-after},'
                      f'setpts=PTS-STARTPTS[v];[0:a]atrim=start={before/fps}:'
                      f'duration={body_frames/fps},asetpts=PTS-STARTPTS[a]')
-            run(['ffmpeg','-v','error','-i',str(path),'-filter_complex_threads','1',
-                 '-filter_complex',graph,'-map','[v]','-map','[a]'] + LOSSLESS + [str(body)])
+            work.append(['ffmpeg','-v','error','-i',str(path),'-filter_complex_threads','1',
+                         '-filter_complex',graph,'-map','[v]','-map','[a]'] + LOSSLESS + [str(body)])
             pieces.append((body, body_frames / fps))
         position += durations[i]
         if not after:
@@ -77,10 +79,13 @@ def compose(paths, durations, settings, style, seconds, temporary, run, per_cut=
             f'[1:a]atrim=duration={half},asetpts=PTS-STARTPTS,afade=t=in:d={half},'
             f'adelay={half*1000}:all=1,apad,atrim=duration={length}[a1];'
             f'[a0][a1]amix=inputs=2:duration=first:normalize=0[a]')
-        run(['ffmpeg','-v','error']+inputs+[
-             '-filter_complex_threads','1','-filter_complex',graph,'-map','[v]','-map','[a]',
-             '-t',str(length)] + LOSSLESS + [str(transition)])
+        work.append(['ffmpeg','-v','error']+inputs+[
+                     '-filter_complex_threads','1','-filter_complex',graph,'-map','[v]','-map','[a]',
+                     '-t',str(length)] + LOSSLESS + [str(transition)])
         pieces.append((transition,length))
         boundaries.append(dict(at=position,start=position-half,duration=length,effect=effect,
                                handles=kind))
+    # Bodies and blends are independent files: build them concurrently.
+    from . import jobs
+    jobs.parallel(run, work, 'Compositing transitions • {done} of {total}')
     return pieces, boundaries

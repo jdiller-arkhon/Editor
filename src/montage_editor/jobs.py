@@ -92,12 +92,13 @@ def _kill_tree(process):
 
 
 def workers():
-    """Concurrent FFmpeg jobs: half the cores (each job uses ~2 threads), DRIFT_WORKERS overrides."""
+    """Concurrent FFmpeg jobs: one per core up to 8 (measured fastest on a 4-core box: 276 s vs 319 s
+    with half the cores, 569 s sequential, 30 s 1080p montage). DRIFT_WORKERS overrides."""
     try:
         override = int(os.environ.get('DRIFT_WORKERS', '0'))
     except ValueError:
         override = 0
-    return max(1, override or min(6, (os.cpu_count() or 2)//2))
+    return max(1, override or min(8, os.cpu_count() or 2))
 
 
 def parallel(function, items, message=None, count=None):

@@ -225,7 +225,7 @@ class DesktopTests(unittest.TestCase):
             prefs=QSettings(str(Path(d)/'local.ini'),QSettings.IniFormat)
             window=Studio(prefs)
             self.assertEqual(window.director_mode.currentData(),'local')
-            self.assertEqual(window.ai_model.text(),'qwen2.5vl:7b')
+            self.assertEqual(window.ai_model.text(),'qwen3.5:9b')
             self.assertTrue(window.ai_model.isEnabled() and window.setup_button.isEnabled())
             window.footage.addItem('clip.mp4');window.music_path='song.wav'
             with patch.object(window,'resolve_song',return_value=True), \
@@ -237,21 +237,26 @@ class DesktopTests(unittest.TestCase):
                 self.assertIn('Ollama is not running',warning.call_args.args[2])
                 self.assertIn('activity engine',warning.call_args.args[2])
             with patch.object(window,'resolve_song',return_value=True), \
-                 patch('montage_editor.local_ai.readiness',return_value=(True,'qwen2.5vl:7b is ready')), \
+                 patch('montage_editor.local_ai.readiness',return_value=(True,'qwen3.5:9b is ready')), \
                  patch('montage_editor.desktop.RenderJob') as job, \
                  patch('montage_editor.desktop.create_montage') as create:
                 window.export(automatic=True)
                 job.call_args.args[0]()
                 editor=create.call_args.kwargs['ai_editor']
                 self.assertIsInstance(editor,LocalDirector)
-                self.assertEqual((editor.model,editor.director_model),('qwen2.5vl:7b','qwen2.5vl:7b'))
-                self.assertEqual(window.local_status.text(),'qwen2.5vl:7b is ready')
+                self.assertEqual((editor.model,editor.director_model),('qwen3.5:9b','qwen3.5:9b'))
+                self.assertEqual(window.local_status.text(),'qwen3.5:9b is ready')
             window.job=None;window.close()
             old=QSettings(str(Path(d)/'old.ini'),QSettings.IniFormat)
-            old.setValue('director_mode',2)
+            old.setValue('director_mode',2);old.setValue('local_model','qwen2.5vl:7b')
             migrated=Studio(old)
             self.assertEqual(migrated.director_mode.currentData(),'claude')
+            self.assertEqual(migrated.ai_model.text(),'qwen3.5:9b')        # the old default moves to the better model
             migrated.close()
+            old.setValue('local_model','llava:13b')
+            custom=Studio(old)
+            self.assertEqual(custom.ai_model.text(),'llava:13b')           # a deliberate choice is kept
+            custom.close()
 
     def test_director_chat_changes_the_edit_through_the_controls(self):
         from types import SimpleNamespace
@@ -265,7 +270,7 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(window.chat_chip.text(),'On this computer')
             window.closing_line.setText('Hope carries us.')
             with patch('montage_editor.local_ai.readiness',return_value=(True,'ready')), \
-                 patch.object(LocalDirector,'_call',return_value=(answer,SimpleNamespace(model='qwen2.5vl:7b'))) as call, \
+                 patch.object(LocalDirector,'_call',return_value=(answer,SimpleNamespace(model='qwen3.5:9b'))) as call, \
                  patch.object(window,'export') as export:
                 window.chat_input.setText('Make it more intense, 45 seconds with a punchy colour look, then show me')
                 window.send_chat()

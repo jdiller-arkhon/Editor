@@ -15,6 +15,8 @@ LOOKS = {
     'punchy': 'eq=contrast=1.12:saturation=1.25:gamma=0.98,unsharp=5:5:0.35',
     'cinematic': 'eq=contrast=1.08:saturation=1.04,colorbalance=rs=-0.03:bs=0.05:rh=0.05:bh=-0.03',
     'mono': 'hue=s=0,eq=contrast=1.1',
+    # Cinematic grade with fine moving grain (texture that also hides banding in dark scenes).
+    'film': 'eq=contrast=1.07:saturation=1.03,colorbalance=rs=-0.03:bs=0.05:rh=0.05:bh=-0.03,noise=c0s=5:c0f=t+u',
 }
 INTERPOLATION = ('none', 'blend', 'motion')
 REFRAME = ('fit', 'follow')

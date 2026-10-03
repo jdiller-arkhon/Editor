@@ -466,7 +466,8 @@ class Studio(QMainWindow):
         form.addRow('Render quality',self.quality)
         self.look=QComboBox()
         for title,key in [('Clean • subtle contrast','clean'),('Punchy • vivid','punchy'),
-                          ('Cinematic • warm/cool balance','cinematic'),('Monochrome','mono'),('Original colour','none')]:
+                          ('Cinematic • warm/cool balance','cinematic'),('Film • cinematic grade with grain','film'),
+                          ('Monochrome','mono'),('Original colour','none')]:
             self.look.addItem(title,key)
         form.addRow('Look',self.look)
         self.slowmo=QComboBox()
@@ -519,7 +520,9 @@ class Studio(QMainWindow):
         workspace.setSizes([1100,400])
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
-        self.ai_model.setText(str(self.preferences.value('local_model',LOCAL_MODEL)) or LOCAL_MODEL)
+        saved_model=str(self.preferences.value('local_model',LOCAL_MODEL)) or LOCAL_MODEL
+        # The earlier default measured poorly (0/5 death screens); move people still on it.
+        self.ai_model.setText(LOCAL_MODEL if saved_model=='qwen2.5vl:7b' else saved_model)
         saved=self.preferences.value('director',None)
         if saved is None:   # earlier versions stored an index: 0 activity (default), 1 Ollama text, 2 Claude
             saved={'2':'claude'}.get(str(self.preferences.value('director_mode',0)),'local')

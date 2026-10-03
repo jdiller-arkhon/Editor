@@ -858,9 +858,10 @@ def render(timeline, output):
         if timeline.transition in BLENDS and len(pieces)>1:
             LOG.info('Compositing %d transition boundaries',len(pieces)-1)
             jobs.report(.75,'Compositing transitions')
-            pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
-                                        timeline.transition,timeline.transition_duration,temporary,run,
-                                        timeline.boundary_transitions or None, handles)
+            with jobs.span(.75, .86):
+                pieces,boundaries = compose([p for p,d in pieces],[d for p,d in pieces],settings,
+                                            timeline.transition,timeline.transition_duration,temporary,run,
+                                            timeline.boundary_transitions or None, handles)
         listing = temporary/'clips.txt'
         listing.write_text(''.join(f"file '{path.name}'\nduration {length:.9f}\n" for path,length in pieces))
         pending = temporary/'final.mp4'
@@ -917,7 +918,7 @@ def render(timeline, output):
         crf,preset = {'draft':('23','fast'),'high':('16','slow'),'master':('12','slow')}[settings.quality]
         jobs.report(.9,'Encoding the final video')
         run(inputs + ['-filter_complex_threads','1','-filter_complex', ';'.join(filters), '-map', '0:v:0', '-map', '[audio]',
-                      '-c:v','libx264','-crf',crf,'-preset',preset,'-pix_fmt','yuv420p','-threads','2',
+                      '-c:v','libx264','-crf',crf,'-preset',preset,'-pix_fmt','yuv420p','-threads',str(os.cpu_count() or 2),
                       '-c:a', 'aac', '-b:a', '320k', '-t', str(duration),
                       '-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709','-color_range','tv',
                       '-movflags', '+faststart', str(pending)])

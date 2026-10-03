@@ -95,15 +95,20 @@ class TechniqueTests(unittest.TestCase):
         self.assertGreater(lift[hit], 12)                                  # exposure pulse on the beat
         self.assertLess(lift[hit+12], lift[hit]/3)                         # and it decays
         self.assertLess(np.abs(lift[:hit-1]).max(), 1.5)                   # nothing before it
+        # The split itself, measured exactly on lossless RGB (4:2:0 delivery softens chroma edges).
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=480x270:rate=30', '-t', '1',
+                              '-vf', craft.pulse_filter([.5], 30, 480), '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'],
+                             capture_output=True, check=True).stdout
+        clip = np.frombuffer(raw, np.uint8).reshape(-1, 270, 480, 3).astype(float)
+
         def offset(frame, channel):
-            # Horizontal displacement of a colour channel against green, from edge (gradient) alignment.
-            edges = np.diff(frame[..., :], axis=1)
+            edges = np.diff(frame, axis=1)
             errors = [np.abs(edges[:, 6+d:-6+d, channel]-edges[:, 6:-6, 1]).mean() for d in range(-4, 5)]
             return int(np.argmin(errors))-4
-        self.assertEqual((offset(a[hit], 0), offset(a[hit], 2)), (0, 0))   # aligned without FX
-        self.assertNotEqual(offset(b[hit], 0), 0)                          # red split on the hit frame ...
-        self.assertNotEqual(offset(b[hit], 0), offset(b[hit], 2))         # ... so red and blue no longer align
-        self.assertEqual(offset(b[hit+6], 0), 0)                           # and gone a few frames later
+        split = max(2, round(480*craft.PULSE_SPLIT/2)*2)
+        self.assertEqual((offset(clip[10], 0), offset(clip[10], 2)), (0, 0))          # before the beat
+        self.assertEqual((offset(clip[15], 0), offset(clip[15], 2)), (-split, split))  # on it: red left, blue right
+        self.assertEqual((offset(clip[19], 0), offset(clip[19], 2)), (0, 0))          # gone after 3 frames
         with self.assertRaises(ValueError):
             replace(base, pulses=[99.0]).validate()
 
@@ -144,6 +149,16 @@ class TechniqueTests(unittest.TestCase):
             render_formats(timeline, out, ['shorts-1080x1920'])
         with self.assertRaises(ValueError):
             render_formats(timeline, out, ['8k-imax'])
+
+    def test_film_look_adds_moving_grain(self):
+        settings = Settings(width=320, height=180, fps=30, quality='master')
+        base = Timeline(1, str(self.music), settings.__dict__, [Clip(str(self.root/'still.mp4'), 0, 1, 1)])
+        render(base, self.root/'flat.mp4'); render(replace(base, look='film'), self.root/'film.mp4')
+        flat, film = frames(self.root/'flat.mp4', 320, 180), frames(self.root/'film.mp4', 320, 180)
+        flicker = lambda v: np.abs(np.diff(v[5:25], axis=0)).mean()
+        self.assertLess(flicker(flat), .3)                    # a still grey card stays still
+        self.assertGreater(flicker(film), max(.4, 4*flicker(flat)))   # grain changes every frame
+        self.assertLess(abs(film.mean()-flat.mean()), 8)      # without shifting exposure much
 
 
 if __name__ == '__main__':

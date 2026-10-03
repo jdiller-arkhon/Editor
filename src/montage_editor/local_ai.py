@@ -11,16 +11,18 @@ from .ai_director import NoRedirect
 
 HOST = 'http://127.0.0.1:11434'
 INSTALL_URL = 'https://ollama.com/download'
-# Vision models that work with DRIFT's local director, best first. Sizes are Ollama's downloads.
+# Vision models for DRIFT's local director, best first. Sizes are Ollama's downloads. Only the
+# first was measured here (16 hand-labelled Xonotic strips, CPU): 4/5 death screens, 0 false flags,
+# fight-vs-movement AUC 0.70, ~43 s per strip. qwen2.5vl:7b scored 0/5 and 0.70 at ~89 s per strip.
 RECOMMENDED = [
-    dict(name='qwen2.5vl:7b', size_gb=6.0, note='Recommended: best balance; ~8 GB GPU memory for real-time speed'),
-    dict(name='qwen2.5vl:32b', size_gb=21, note='Strongest; needs a 24 GB GPU'),
-    dict(name='qwen2.5vl:3b', size_gb=3.2, note='Small and fast, but noticeably less accurate'),
+    dict(name='qwen3.5:9b', size_gb=6.6, note='Recommended: best measured here; ~8 GB GPU for fast reviews'),
+    dict(name='qwen3.5:27b', size_gb=17, note='Larger Qwen 3.5 for 24 GB GPUs (not measured here)'),
+    dict(name='qwen3.5:4b', size_gb=3.4, note='Smaller machines (not measured here)'),
 ]
 
 
 def valid_name(model):
-    """Ollama model references: letters, digits and ._-:/ only (e.g. qwen2.5vl:7b, user/model:tag)."""
+    """Ollama model references: letters, digits and ._-:/ only (e.g. qwen3.5:9b, user/model:tag)."""
     import re
     return isinstance(model, str) and 0 < len(model) <= 200 and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/-]*', model) \
         is not None and '..' not in model
@@ -67,7 +69,7 @@ def status(host=HOST):
 def pull(model, progress=None, host=HOST, timeout=3600):
     """Ask Ollama to download ``model``; ``progress(fraction, message)`` is called as it streams."""
     if not valid_name(model):
-        raise ValueError('Choose a model name such as qwen2.5vl:7b')
+        raise ValueError('Choose a model name such as qwen3.5:9b')
     try:
         with _open('/api/pull', {'model': model, 'stream': True}, timeout=timeout, host=host) as reply:
             for line in reply:

@@ -50,7 +50,7 @@ class EditChatTests(unittest.TestCase):
     def test_chat_round_trip_with_the_local_director(self):
         ollama = FakeOllama()
         self.addCleanup(ollama.close)
-        ollama.reply = {'model': 'qwen2.5vl:7b', 'done_reason': 'stop', 'message': {'content': json.dumps(dict(
+        ollama.reply = {'model': 'qwen3.5:9b', 'done_reason': 'stop', 'message': {'content': json.dumps(dict(
             reply='Faster cuts suit this song; I set the pace to fast and will make a preview.',
             actions=[dict(action='set_pace', value='fast'), dict(action='make', value='preview'),
                      dict(action='run_shell', value='rm -rf')]))}}

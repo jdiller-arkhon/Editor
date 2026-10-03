@@ -4,11 +4,23 @@
 
 Safeguards for small local models:
 - the review schema pins one judgement per strip (min/maxItems, id enum); an incomplete answer is retried once, then reported;
+- the review is a checklist (`CHECK_SYSTEM`/`checklist_moment`): overlay frames, opponent, firing, kill, peak, highlight; usability and the event come from those facts and the highlight is half model score, half fixed evidence score;
 - judgements are blended 60/40 with the measured activity score (`LOCAL_WEIGHT`), and timing stays measured locally;
+- if more than two-thirds of the reviewed clips are flagged as overlays the flags are ignored (the model is misreading the HUD);
 - `enforce_playbook` rewrites the director plan to standard montage craft (hook, climax on the drop, motivated transitions, ramp budget, clean ending) and records each correction in `analysis.json → ai_editor.edit_plan.playbook`;
 - director chat (`edit_chat.py`) only runs validated actions on topics the person mentioned.
 
-Measured on this development machine (CPU only, Q4 models): qwen2.5vl:7b ≈130 s per strip, correct on a death screen but called a real fight "movement" with highlight 0; qwen2.5vl:3b 13–70 s per strip, returned empty reviews until the schema was pinned, and proposed unrequested chat changes. Speed on a GPU and judgement quality across games are not validated. Tests use a fake loopback Ollama server with real frames and renders; `DRIFT_LIVE_OLLAMA=<model>` runs an opt-in live check against a real model.
+Evaluation (`scratchpad` harness, not shipped): 16 six-frame strips from the held-out Xonotic duel, labelled by inspecting every frame: 5 death/scoreboard, 6 fights (opponent plus fire, some kills), 5 walking/pickups. Metrics: death screens caught, non-death clips flagged unusable, AUC of the model's own highlight for fights vs walking, seconds per strip on this 4-core CPU while other work ran.
+
+| Model / prompt | Deaths | False flags | AUC | s/strip |
+|---|---|---|---|---|
+| activity heuristic | — | — | 0.63 | — |
+| qwen3.5:9b, single judgement | 1/5 | 1 | 0.58 | 63 |
+| **qwen3.5:9b, checklist (default)** | 4/5 | 0 | 0.70 | 43 |
+| qwen2.5vl:7b, checklist | 0/5 | 0 | 0.70 | 89 |
+| gemma4:e4b, checklist | 5/5 | 11 | 0.37 | 25 |
+
+The missed death strip shows the scoreboard in one of six frames, which the checklist rule (two or more overlaid frames) deliberately keeps. 16 strips is a small sample from one game: treat the numbers as a ranking, not a guarantee. Larger models were not measured (disk/RAM here).
 
 # Legacy text-only planner (`--ollama-model`)
 
