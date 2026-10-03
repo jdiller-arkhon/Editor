@@ -57,7 +57,15 @@ class HandleTests(unittest.TestCase):
         # real footage keeps brightening (+2 levels/frame), a held frame stays put.
         gap = (real[cut+1:cut+8]-frozen[cut+1:cut+8]).mean(axis=(1, 2))
         self.assertTrue(np.all(gap > .3), gap)
-        self.assertGreater(gap[-1], gap[0])
+        # The outgoing weight (1-w) falls through the dissolve, so the raw gap can shrink even
+        # though real footage keeps brightening. Divide it out using the held render, where
+        # frozen-G = (1-w)(H-G) with G the incoming grey: gap/(frozen-G) = (R-H)/(H-G) grows.
+        grey = real[cut+20].mean()
+        weight = frozen[cut+1:cut+8].mean(axis=(1, 2))-grey
+        usable = weight > 2                     # enough outgoing picture left to measure
+        ratio = gap[usable]/weight[usable]
+        self.assertGreaterEqual(len(ratio), 3, weight)
+        self.assertGreater(ratio[-1], ratio[0], (gap, weight))
 
     def test_handles_never_show_footage_used_by_another_shot(self):
         settings = Settings(width=160, height=90, fps=30, quality='draft')

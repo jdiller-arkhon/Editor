@@ -107,6 +107,7 @@ class DesktopTests(unittest.TestCase):
         import subprocess,json
         with tempfile.TemporaryDirectory() as d:
             window=Studio(QSettings(str(Path(d)/'flow.ini'),QSettings.IniFormat))
+            window.director_mode.setCurrentIndex(window.director_mode.findData('activity'))
             window.export_preset.setCurrentIndex(window.export_preset.findData('shorts-1080x1920'))
             self.assertEqual((window.delivery_settings().width,window.delivery_settings().height),(1080,1920))
             window.footage.addItem('clip.mp4');window.music_path='song.wav'
@@ -251,6 +252,64 @@ class DesktopTests(unittest.TestCase):
             migrated=Studio(old)
             self.assertEqual(migrated.director_mode.currentData(),'claude')
             migrated.close()
+
+    def test_director_chat_changes_the_edit_through_the_controls(self):
+        from types import SimpleNamespace
+        from montage_editor.vision_director import LocalDirector
+        answer=dict(reply='Faster pace, a punchy look and 45 s; making a preview.',
+                    actions=[dict(action='set_pace',value='fast'),dict(action='set_length',value='45'),
+                             dict(action='set_look',value='punchy'),dict(action='make',value='preview'),
+                             dict(action='format_disk',value='C:')])
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'chat.ini'),QSettings.IniFormat))
+            self.assertEqual(window.chat_chip.text(),'On this computer')
+            window.closing_line.setText('Hope carries us.')
+            with patch('montage_editor.local_ai.readiness',return_value=(True,'ready')), \
+                 patch.object(LocalDirector,'_call',return_value=(answer,SimpleNamespace(model='qwen2.5vl:7b'))) as call, \
+                 patch.object(window,'export') as export:
+                window.chat_input.setText('Make it more intense, 45 seconds with a punchy colour look, then show me')
+                window.send_chat()
+                window.chat_job.wait(10000);self.app.processEvents();self.app.processEvents()
+                prompt=call.call_args.args[0]['text']
+                self.assertIn('Make it more intense, 45 seconds',prompt)
+                self.assertIn('"pace": "balanced"',prompt)
+                export.assert_called_once_with(automatic=True,preview=True)
+            self.assertEqual((window.pace.currentData(),window.duration.value(),window.look.currentData()),('fast',45,'punchy'))
+            self.assertEqual(window.closing_line.text(),'Hope carries us.')      # not asked, not changed
+            log=window.chat_log.toPlainText()
+            self.assertIn('Faster pace',log);self.assertIn('Pace → Fast',log)
+            self.assertIn('format_disk',log);self.assertIn('unknown action',log)
+            self.assertIsNone(window.chat_job);self.assertTrue(window.chat_send.isEnabled())
+            # Ollama unavailable: explained in the chat, nothing changes.
+            with patch('montage_editor.local_ai.readiness',return_value=(False,'Ollama is not running on this computer.')):
+                window.chat_input.setText('Slower please');window.send_chat()
+                window.chat_job.wait(10000);self.app.processEvents();self.app.processEvents()
+            self.assertIn('Ollama is not running',window.chat_log.toPlainText())
+            self.assertEqual(window.pace.currentData(),'fast')
+            window.close()
+
+    def test_any_song_can_be_pasted_into_one_box(self):
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'song.ini'),QSettings.IniFormat))
+            song=Path(d)/'Some Artist - Anthem.flac';song.touch()
+            window.song_name.setText(f'"{song}"')
+            self.assertTrue(window.resolve_song())
+            self.assertEqual(window.music_path,str(song.resolve()))
+            library=Path(d)/'library'
+            downloaded=library/'Linked Song.m4a'
+            def fake_add(link,folder,**options):
+                Path(folder).mkdir(parents=True,exist_ok=True);downloaded.touch()
+                return dict(path=str(downloaded),source='youtube',folder=folder,link=link)
+            after=[]
+            window.clear_music_selection();window.song_name.setText('https://youtu.be/abc123')
+            with patch.object(window,'music_library',return_value=library), \
+                 patch('montage_editor.music_sources.add_music',side_effect=fake_add) as add:
+                self.assertFalse(window.resolve_song(then=lambda:after.append(window.music_path)))
+                window.job.wait(10000)
+                for _ in range(5):self.app.processEvents()
+            self.assertEqual(add.call_args.args[:2],('https://youtu.be/abc123',str(library)))   # no folder prompt
+            self.assertEqual(after,[str(downloaded.resolve())])                                # then carried on
+            window.close()
 
     def test_story_tone_is_subtle_by_default_and_custom_line_survives_reload(self):
         with tempfile.TemporaryDirectory() as d:

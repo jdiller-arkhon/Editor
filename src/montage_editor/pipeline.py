@@ -220,6 +220,7 @@ class Timeline:
     punch_through: bool = False
     match_shots: bool = False
     bookends: bool = False
+    impacts: bool = False
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -235,7 +236,7 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
-        if not all(isinstance(v, bool) for v in (self.punch_through, self.match_shots, self.bookends)):
+        if not all(isinstance(v, bool) for v in (self.punch_through, self.match_shots, self.bookends, self.impacts)):
             raise ValueError('punch_through must be true or false')
         if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
                 not isinstance(self.motion_blur, bool) or self.reframe not in craft.REFRAME or
@@ -593,6 +594,36 @@ def validate_output(path, settings, expected_duration):
             'full_decode': True}
 
 
+def impact_time(clip):
+    """Output time of a slow-motion shot's hit (its anchor), or None."""
+    at = clip.anchor_output
+    if clip.speed_profile != 'ramp' or at is None or not .1 <= at <= clip.duration-.3:
+        return None
+    return float(at)
+
+
+def match_push_directions(timeline):
+    """Directional pushes follow the camera: the push continues the outgoing shot's pan.
+
+    Returns (timeline, changes). Only boundaries already chosen as push blends change direction;
+    a still camera keeps the planned direction.
+    """
+    transitions = list(timeline.boundary_transitions)
+    changes = []
+    position = 0.0
+    for i, clip in enumerate(timeline.clips[:-1]):
+        if i < len(transitions) and transitions[i] in ('smoothleft', 'smoothright'):
+            end = clip.start+source_offset(clip.duration, clip.duration, clip.speed_profile)
+            velocity = craft.pan_velocity(clip.source, end)
+            wanted = craft.push_for_pan(velocity)
+            if wanted and wanted != transitions[i]:
+                changes.append(dict(boundary=i+1, at=round(position+clip.duration, 3), pan=round(velocity, 2),
+                                    was=transitions[i], now=wanted))
+                transitions[i] = wanted
+        position += clip.duration
+    return replace(timeline, boundary_transitions=transitions), changes
+
+
 def accent_filter(accents, settings):
     """Punch-in zoom (+7%) and a small decaying shake starting on each accent time.
 
@@ -753,6 +784,9 @@ def render(timeline, output):
                 graph=[f'[0:v]{chain}[src]']+[g.replace('[0:v]','[src]') for g in graph]
             look=craft.LOOKS[timeline.look]
             blur=craft.motion_blur_filter() if timeline.motion_blur and clip.speed_profile!='normal' else ''
+            hit=impact_time(clip) if timeline.impacts else None
+            if hit is not None:
+                blur=(blur+',' if blur else '')+craft.impact_filter(hit,settings.fps)
             video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,'
                           f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
                           +(matches[i]+',' if matches[i] else '')+(look+',' if look else '')+
@@ -763,8 +797,9 @@ def render(timeline, output):
                 decay=max(1,min(timeline.transition_duration,clip.duration/2)*settings.fps/2)
                 video_filter+=(f",zoompan=z='1+0.06*(exp(-on/{decay})+exp(-({frames}-on)/{decay}))':"
                                f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={settings.width}x{settings.height}:fps={settings.fps}")
-            if clip.accents:
-                video_filter+=accent_filter(clip.accents,settings)
+            shakes=sorted(set(clip.accents)|({round(hit,4)} if hit is not None else set()))
+            if shakes:
+                video_filter+=accent_filter(shakes,settings)
             graph.append('[vret]'+video_filter+transition_filter+title_filter+'[vout]')
             if has_audio:
                 # 6 ms edge fades: hard cuts never splice the waveform mid-cycle (no clicks).
@@ -856,7 +891,9 @@ def render(timeline, output):
                                    motion_blur=timeline.motion_blur, reframe=timeline.reframe, sfx=timeline.sfx,
                                    shot_matching=corrections if timeline.match_shots else None,
                                    sfx_count=sum(b.get('effect') in craft.SWISH_EFFECTS for b in boundaries)
-                                   if timeline.sfx=='swish' else 0)
+                                   if timeline.sfx=='swish' else 0,
+                                   impacts=sum(impact_time(c) is not None for c in timeline.clips)
+                                   if timeline.impacts else 0)
         report['music_start'] = timeline.music_start
         report['transition'] = timeline.transition
         report['transition_boundaries'] = boundaries
@@ -947,6 +984,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            punch_through=bool(story.get('punch_through',False)),
                            match_shots=bool(story.get('match_shots',False)),
                            bookends=bool(story.get('bookends',False)),
+                           impacts=bool(story.get('impacts',False)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if vision is not None and getattr(ai_editor, 'direct_edit', False) and hasattr(ai_editor, 'plan_edit'):
@@ -967,6 +1005,9 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     if (timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats')
             and not timeline.boundary_transitions):
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
+    pan_changes = []
+    if timeline.transition in BLENDS and timeline.boundary_transitions:
+        timeline, pan_changes = match_push_directions(timeline)
     jobs.report(.45,'Rendering')
     with jobs.span(.45, 1.0):
         report = render(timeline, output)
@@ -978,6 +1019,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
         (('local vision' if vision.get('provider', '').startswith('ollama') else 'claude vision') if vision else 'heuristic')
     if vision:
         report['ai_editor'] = {k: vision[k] for k in ('provider','model','reviewed','usable','events','seconds') if k in vision}
+    report['motion_matched_pushes'] = pan_changes
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
     report['music_alignment'] = alignment_report(timeline, analysis)

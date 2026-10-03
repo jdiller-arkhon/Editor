@@ -176,3 +176,11 @@
 
 ## 2026-10-02 — Pacing variety (Claude continuation)
 - State-aware cut DP (length-repeat penalty) and post-drop double-time bursts. First version put the burst on the drop itself and removed the drop's impact ramp (caught by an existing render test); bursts now start a bar later. 67 core OK.
+
+## 2026-10-02/03 — Local AI director, playbook, any-music, director chat (Claude continuation)
+- User asked for an embedded director "like Ollama, not an API call". LocalDirector runs the same review/direct/cut-review prompts on a local Ollama vision model (default qwen2.5vl:7b), loopback only. Default in the desktop (setup/download button) and `--director auto` in the CLI; Claude stays optional.
+- Live checks on this CPU box: 7B ~130 s/strip and misjudged a fight; the 3B returned zero moments until the schema pinned one answer per strip (min/maxItems, id enum) with one retry. Local scores are blended 60/40 with measured activity.
+- Editing playbook enforced on local plans (hook, climax on the drop, motivated transitions, ramp budget, calm ending); motion-matched push direction from measured pan (phase correlation picked HUD/effect peaks with the wrong sign, replaced by a ±12 px search); impact frames on slow-motion hits (Timeline.impacts, default off).
+- Any music: one song box takes links, file paths (audio or video), or titles; links download to Music/DRIFT and the create continues. Pace presets.
+- Director chat: validated actions applied through the visible controls. A live 3B test proposed changing the song and format unasked, so actions on topics the person did not mention are rejected.
+- CI fixes: colour-match tint below the 0.01 apply threshold was never applied on the CI FFmpeg (threshold now 0.004); the Windows handle test assumed the raw dissolve gap must grow (the outgoing weight falls), now divides out the measured weight; the desktop job hung 6 h on a modal warning because the new local-AI default needs Ollama (test pins the activity engine) and CI jobs now have 30-minute timeouts.

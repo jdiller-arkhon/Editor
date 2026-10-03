@@ -109,6 +109,7 @@ MATCH_STRENGTH = .6          # move 60% of the way toward the montage median
 GAMMA_LIMITS = (.8, 1.25)
 TINT_LIMIT = .05
 TINT_STRENGTH = .35        # colour is often deliberate in games (lit areas), so only nudge it
+TINT_APPLY = .004          # ~1 level in 8-bit; smaller corrections are skipped as invisible
 
 
 def shot_statistics(path, start, duration, samples=3, width=64, height=36):
@@ -144,9 +145,50 @@ def match_filters(statistics):
         parts = []
         if abs(gamma-1) > .02:
             parts.append(f'eq=gamma={gamma:.3f}')
-        if np.abs(tint).max() > .01:
+        if np.abs(tint).max() > TINT_APPLY:
             parts.append(f'colorbalance=rm={tint[0]:.3f}:gm={tint[1]:.3f}:bm={tint[2]:.3f}:'
                          f'rh={tint[0]:.3f}:gh={tint[1]:.3f}:bh={tint[2]:.3f}')
         filters.append(','.join(parts))
         details.append(dict(gamma=round(gamma, 3), tint=[round(float(v), 3) for v in tint]))
     return filters, details
+
+
+IMPACT_FLASH = .22         # brightness lift on the hit frames (eq brightness, -1..1)
+IMPACT_FRAMES = 2
+
+
+def impact_filter(at, fps):
+    """Impact frame: a two-frame exposure flash exactly on the hit (output time ``at``)."""
+    end = at+IMPACT_FRAMES/fps
+    return f"eq=brightness={IMPACT_FLASH}:contrast=1.08:enable='between(t,{at:.4f},{end:.4f})'"
+
+
+PAN_MINIMUM = 1.5          # pixels per frame at 160 px width: below this the camera is ~still
+
+
+def pan_velocity(path, at, span=.3, width=160, height=90):
+    """Horizontal image motion (px/frame at 160 px wide) just before ``at``; negative = content moves left.
+
+    Best horizontal shift between consecutive frames (mean absolute difference over a ±12 px
+    search): a camera turning right moves the image left. Plain search, not phase correlation,
+    because animated HUD/effects produce competing correlation peaks.
+    """
+    rate, reach = 15, 12
+    raw = jobs.run(['ffmpeg', '-v', 'error', '-ss', f'{max(0.0, at-span):.3f}', '-i', path, '-t', f'{span:.3f}',
+                    '-an', '-vf', f'fps={rate},scale={width}:{height},format=gray', '-f', 'rawvideo',
+                    'pipe:1']).stdout
+    frames = np.frombuffer(raw[:len(raw)//(width*height)*width*height], np.uint8).reshape(-1, height, width)
+    shifts = []
+    for a, b in zip(frames[:-1].astype(np.float32), frames[1:].astype(np.float32)):
+        errors = [np.abs(a[:, reach-d:width-reach-d]-b[:, reach:width-reach]).mean() for d in range(-reach, reach+1)]
+        best = int(np.argmin(errors))
+        if errors[best] < .8*float(np.median(errors)):     # a clear match; flat or chaotic frames carry no pan
+            shifts.append(float(best-reach))                # b(x) = a(x-d): content moved by d
+    return float(np.median(shifts))*rate/30 if shifts else 0.0
+
+
+def push_for_pan(velocity):
+    """The push whose motion continues the camera's: content moving left → push left."""
+    if abs(velocity) < PAN_MINIMUM:
+        return None
+    return 'smoothleft' if velocity < 0 else 'smoothright'

@@ -43,3 +43,17 @@ def draft_of(settings):
     scale = min(1.0, 640/max(settings.width, settings.height))
     even = lambda v: max(2, int(round(v*scale/2))*2)
     return Settings(**dict(settings.__dict__, width=even(settings.width), height=even(settings.height), quality='draft'))
+
+
+# Editing pace: (shortest, longest) shot in seconds before beat snapping. "balanced" is the default.
+PACES = {
+    'calm': (2.0, 5.0),
+    'balanced': (1.5, 4.0),
+    'fast': (1.0, 3.0),
+    'hyper': (.75, 2.25),
+}
+
+
+def with_pace(settings, pace):
+    shortest, longest = PACES[pace]
+    return Settings(**dict(settings.__dict__, minimum_clip=shortest, maximum_clip=longest))

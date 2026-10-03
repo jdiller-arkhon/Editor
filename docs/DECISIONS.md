@@ -78,3 +78,6 @@ search match is used only if its measured duration is within 7 s of Spotify's (e
 The UI and CLI show a rights notice: YouTube downloads may breach YouTube's Terms unless the uploader
 permits it, and published montages with copyrighted songs are commonly claimed. Playlists, albums,
 live streams and >20-minute items are refused.
+
+## Local AI director is the default; the engine, not the model, guarantees craft
+Footage stays on the computer and nothing needs an account. Small local vision models are slow on CPU and unreliable judges, so their plans are validated, the editing playbook is enforced in code, their scores are blended with measured activity, and chat actions only run when the person asked about that topic. Claude remains an opt-in alternative.

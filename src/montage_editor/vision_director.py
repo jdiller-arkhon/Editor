@@ -101,6 +101,20 @@ DIRECT_SYSTEM = (
     'next to each other. End on a calm, clean shot that suits a closing line. Never invent slot or '
     'moment numbers. "arc": one sentence describing the story of the edit.'
 )
+# The editing playbook. Prompts ask for it; ``enforce_playbook`` guarantees it whatever a
+# (possibly small, local) model returns. Each rule is standard montage craft:
+PLAYBOOK = (
+    'hook: the opening shot is one of the stronger moments (viewers decide in seconds)',
+    'climax: the strongest moment lands on the drop or the most intense slot',
+    'hard cuts on the beat by default; motivated transitions only into a new phrase, build, rise or drop',
+    'dissolve only into the final shot; at most one blur blend',
+    'slow motion (ramp) is rare: at most one shot in four, never twice in a row, never on the final shot',
+    'punch-ins only on energetic music (intensity >= 0.35), never on the final shot',
+    'the final shot is played straight so the closing line reads cleanly',
+)
+
+
+DIRECT_SYSTEM_LOCAL = DIRECT_SYSTEM+' Playbook (enforced afterwards): '+'; '.join(PLAYBOOK)+'.'
 
 REVIEW_SYSTEM = (
     'You are the senior editor reviewing a gaming montage cut before render. Image 1 shows each '
@@ -259,6 +273,7 @@ class ClaudeDirector:
                  direct_edit=True):
         self.model, self.effort, self.limit = model, effort, limit
         self.director_model, self.direct_edit = director_model, direct_edit
+        self.strict = False   # True: the engine enforces PLAYBOOK on the director's plan
         self._client = client
 
     @property
@@ -405,14 +420,20 @@ class ClaudeDirector:
                     + '\nMoments:\n' + '\n'.join(moment_lines)},
                    image_block(tile(frames, 6))]
         model = self.director_model
-        request = dict(self._request(DIRECT_SYSTEM, DIRECT_SCHEMA, content), model=model)
+        request = dict(self._request(DIRECT_SYSTEM_LOCAL if self.strict else DIRECT_SYSTEM, DIRECT_SCHEMA, content),
+                       model=model)
         plan, response = self._call(request, 'edit direction')
         assignments, arc = validate_direction(plan, len(timeline.clips), len(pool))
+        corrections = []
+        if self.strict:
+            assignments, corrections = enforce_playbook(assignments, slot_facts(timeline, music),
+                                                        {j: c['score'] for j, c in enumerate(pool)})
         excluded = [c for c in candidates if c.get('exclude')]
         result, applied, notes = apply_plan(timeline, [(s, pool[m], t, o) for s, m, t, o in assignments], music, excluded)
         return result, dict(model=getattr(response, 'model', model), arc=arc, slots=len(timeline.clips),
                             planned=len(assignments), applied=[a+1 for a in applied], notes=notes,
                             treatments={t: sum(x[2] == t for x in assignments) for t in TREATMENTS},
+                            playbook=corrections if self.strict else None,
                             usage=self._usage(response))
 
 def validate_swaps(review, shots, alternates):
@@ -459,6 +480,79 @@ def validate_direction(plan, slots, moments):
         drop = {b for a, b in zip(ramps, ramps[1:]) if b == a+1}
         result = [(s, m, 'straight' if s in drop else t, o) for s, m, t, o in result]
     return result, str(plan.get('arc', ''))[:400]
+
+
+def slot_facts(timeline, music):
+    """Per slot: intensity 0-1, musical marks and length, for prompts and the playbook."""
+    energy = np.asarray(music.get('energy', []), dtype=float)
+    hop = music.get('hop_seconds', .05)
+    scale = (float(np.quantile(energy, .05)), float(np.quantile(energy, .95))) if len(energy) else (0, 1)
+    phrases = [(p['time'], p['kinds']) for p in music.get('phrases', [])]
+    facts, position = [], 0.0
+    for clip in timeline.clips:
+        window = energy[int(position/hop):int((position+clip.duration)/hop)+1]
+        level = float(np.clip((window.mean()-scale[0])/max(scale[1]-scale[0], 1e-9), 0, 1)) if len(window) else .5
+        marks = sorted({k for t, kinds in phrases if position-.05 <= t < position+clip.duration-.05 for k in kinds})
+        facts.append(dict(start=position, duration=clip.duration, level=level, marks=marks))
+        position += clip.duration
+    return facts
+
+
+def enforce_playbook(assignments, facts, scores):
+    """Apply PLAYBOOK to validated assignments [(slot, moment, treatment, transition_out)].
+
+    ``scores`` maps moment index -> judged score. Returns (assignments, corrections).
+    """
+    plan = {slot: [moment, treatment, out] for slot, moment, treatment, out in assignments}
+    corrections = []
+    n = len(facts)
+    final = n-1
+
+    def note(rule, slot, change):
+        corrections.append(dict(rule=rule, slot=slot+1, change=change))
+    # Climax: the best assigned moment goes on the drop (else the most intense slot).
+    if len(plan) >= 2:
+        drops = [i for i in plan if 'drop' in facts[i]['marks']]
+        climax = drops[0] if drops else max(plan, key=lambda i: (facts[i]['level'], -i))
+        best = max(plan, key=lambda i: (scores.get(plan[i][0], 0), -i))
+        if best != climax and scores.get(plan[best][0], 0) > scores.get(plan[climax][0], 0):
+            plan[best][0], plan[climax][0] = plan[climax][0], plan[best][0]
+            note('climax', climax, f'moved the strongest moment here from S{best+1}')
+    # Hook: the opener should be at least the median assigned moment.
+    if 0 in plan and len(plan) >= 3:
+        values = sorted(scores.get(m, 0) for m, _, _ in plan.values())
+        median = values[len(values)//2]
+        if scores.get(plan[0][0], 0) < median:
+            options = [i for i in plan if i not in (0, final) and 'drop' not in facts[i]['marks']
+                       and scores.get(plan[i][0], 0) >= median and i != max(plan, key=lambda j: scores.get(plan[j][0], 0))]
+            if options:
+                swap = min(options, key=lambda i: scores.get(plan[i][0], 0))
+                plan[0][0], plan[swap][0] = plan[swap][0], plan[0][0]
+                note('hook', 0, f'opened with a stronger moment from S{swap+1}')
+    # Treatments.
+    ramps = 0
+    budget = max(1, n//4)
+    for i in sorted(plan):
+        treatment = plan[i][1]
+        if treatment == 'ramp' and (i == final or ramps >= budget or plan.get(i-1, [None, None])[1] == 'ramp'):
+            plan[i][1] = 'straight'; note('slow motion', i, 'played straight')
+        elif treatment == 'punch' and (i == final or facts[i]['level'] < .35):
+            plan[i][1] = 'straight'; note('punch-ins', i, 'played straight')
+        ramps += plan[i][1] == 'ramp'
+    # Transitions out of slot i lead into slot i+1.
+    blurs = 0
+    for i in sorted(plan):
+        out = plan[i][2]
+        if i == final or out == 'cut':
+            continue
+        into_final = i+1 == final
+        motivated = bool(set(facts[i+1]['marks']) & {'phrase', 'grid', 'build', 'rise', 'drop'})
+        allowed = (out == 'dissolve' and into_final) or (out != 'dissolve' and motivated and
+                                                         (out != 'blur' or blurs == 0))
+        if not allowed:
+            plan[i][2] = 'cut'; note('transitions', i, f'{out} became a hard cut')
+        blurs += plan[i][2] == 'blur'
+    return [(i, m, t, o) for i, (m, t, o) in sorted(plan.items())], corrections
 
 
 def _slot_lines(timeline, music):
@@ -515,6 +609,7 @@ class LocalDirector(ClaudeDirector):
         super().__init__(model=model, client=None, director_model=model, limit=limit, **options)
         self.host, self.timeout, self.batch, self.num_ctx = host.rstrip('/'), timeout, batch, num_ctx
         self.weight = weight
+        self.strict = True    # small local models get the playbook enforced, not just requested
 
     def request(self, pool, brief):
         """As for Claude, but the schema pins one judgement per strip (small models otherwise skip them)."""

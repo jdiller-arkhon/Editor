@@ -19,7 +19,8 @@ from unittest.mock import patch
 from montage_editor import jobs, local_ai
 from montage_editor.config import Settings
 from montage_editor.pipeline import create_montage
-from montage_editor.vision_director import DIRECT_SYSTEM, REVIEW_SYSTEM, LocalDirector
+from montage_editor.vision_director import (DIRECT_SYSTEM, DIRECT_SYSTEM_LOCAL, REVIEW_SYSTEM, LocalDirector,
+                                            enforce_playbook)
 from test_rhythm import write_song
 from test_vision_director import judge
 
@@ -83,7 +84,7 @@ class FakeOllama:
         system, user = payload['messages'][0]['content'], payload['messages'][1]['content']
         if system == REVIEW_SYSTEM:
             content = dict(swaps=[], notes='Cut is strong.')
-        elif system == DIRECT_SYSTEM:
+        elif system.startswith(DIRECT_SYSTEM):
             content = dict(slots=[], arc='Keep the draft.')
         else:
             ids = [int(line.split()[1].rstrip(':')) for line in user.splitlines() if line.startswith('Candidate ')]
@@ -162,13 +163,34 @@ class LocalDirectorTests(unittest.TestCase):
         self.assertEqual(report['ai_director'], 'local vision')
         self.assertEqual(report['ai_editor']['provider'], 'ollama (local)')
         systems = [c['messages'][0]['content'] for c in self.ollama.chats]
-        self.assertIn(DIRECT_SYSTEM, systems)          # the local model also directs the edit
+        self.assertIn(DIRECT_SYSTEM_LOCAL, systems)    # the local model also directs the edit, with the playbook
         analysis = json.loads(output.with_suffix('.analysis.json').read_text())
         # The cut review ran: either the local model saw it, or no unused alternates were left.
         review = analysis['ai_editor']['cut_review']
         self.assertNotIn('error', review)
         self.assertTrue(REVIEW_SYSTEM in systems or review['notes'] == 'no unused alternates')
         self.assertEqual(analysis['ai_editor']['edit_plan']['model'], 'qwen2.5vl:7b')
+
+    def test_playbook_is_enforced_whatever_the_model_says(self):
+        levels, marks = [.3, .5, .6, 1.0, .8, .2], [[], ['phrase'], [], ['drop'], [], []]
+        facts = [dict(start=i*2.0, duration=2.0, level=l, marks=m) for i, (l, m) in enumerate(zip(levels, marks))]
+        scores = {0: .2, 1: .5, 2: .6, 3: .4, 4: .95, 5: .3}
+        plan = [(0, 0, 'punch', 'zoom'), (1, 1, 'ramp', 'push_left'), (2, 2, 'ramp', 'blur'),
+                (3, 3, 'straight', 'dissolve'), (4, 4, 'punch', 'cut'), (5, 5, 'punch', 'cut')]
+        result, corrections = enforce_playbook(plan, facts, scores)
+        self.assertEqual(result, [(0, 1, 'straight', 'zoom'),      # hook: stronger opener; calm music: no punch
+                                  (1, 0, 'ramp', 'cut'),           # one ramp allowed; unmotivated push -> cut
+                                  (2, 2, 'straight', 'blur'),      # ramp budget spent; blur into the drop is fine
+                                  (3, 4, 'straight', 'cut'),       # climax: strongest moment on the drop
+                                  (4, 3, 'punch', 'cut'),
+                                  (5, 5, 'straight', 'cut')])      # final shot plays straight
+        self.assertEqual({c['rule'] for c in corrections},
+                         {'climax', 'hook', 'slow motion', 'punch-ins', 'transitions'})
+        # A plan that already follows the playbook is left alone.
+        good = [(0, 4, 'straight', 'cut'), (1, 2, 'punch', 'cut'), (2, 1, 'straight', 'cut'),
+                (3, 3, 'ramp', 'cut'), (4, 0, 'punch', 'dissolve'), (5, 5, 'straight', 'cut')]
+        scores = {4: .7, 2: .5, 1: .45, 3: .9, 0: .4, 5: .3}
+        self.assertEqual(enforce_playbook(good, facts, scores), (good, []))
 
     def test_failures_are_explained_and_hosts_are_local_only(self):
         with self.assertRaisesRegex(ValueError, 'only talks to Ollama on this computer'):

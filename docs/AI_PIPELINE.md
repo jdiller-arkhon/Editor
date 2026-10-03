@@ -1,4 +1,17 @@
-# Local automatic direction with Ollama
+# Local AI director (Ollama vision model)
+
+**Current default.** `vision_director.LocalDirector` sends six-frame JPEG strips and contact sheets (never filenames) to a vision model served by Ollama on 127.0.0.1 (`/api/chat`, `format` = JSON schema, no proxy, no redirects, cancellable mid-request). It reviews candidate moments in batches of 4, directs the edit on the fixed beat slots (moment, treatment, transition per slot) and reviews the planned cut, exactly like the optional Claude editor. `local_ai.py` checks whether Ollama runs, which installed models report the `vision` capability, and downloads a model through Ollama on request.
+
+Safeguards for small local models:
+- the review schema pins one judgement per strip (min/maxItems, id enum); an incomplete answer is retried once, then reported;
+- judgements are blended 60/40 with the measured activity score (`LOCAL_WEIGHT`), and timing stays measured locally;
+- `enforce_playbook` rewrites the director plan to standard montage craft (hook, climax on the drop, motivated transitions, ramp budget, clean ending) and records each correction in `analysis.json → ai_editor.edit_plan.playbook`;
+- director chat (`edit_chat.py`) only runs validated actions on topics the person mentioned.
+
+Measured on this development machine (CPU only, Q4 models): qwen2.5vl:7b ≈130 s per strip, correct on a death screen but called a real fight "movement" with highlight 0; qwen2.5vl:3b 13–70 s per strip, returned empty reviews until the schema was pinned, and proposed unrequested chat changes. Speed on a GPU and judgement quality across games are not validated. Tests use a fake loopback Ollama server with real frames and renders; `DRIFT_LIVE_OLLAMA=<model>` runs an opt-in live check against a real model.
+
+# Legacy text-only planner (`--ollama-model`)
+
 
 ## User workflow
 

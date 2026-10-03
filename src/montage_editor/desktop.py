@@ -7,19 +7,19 @@ import sys
 from datetime import datetime
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QSettings, QStandardPaths
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QUrl, QSettings, QStandardPaths
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QMainWindow, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QFileDialog, QListWidget, QFormLayout, QSpinBox, QDoubleSpinBox,
     QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QSplitter, QProgressBar,
     QMessageBox, QSlider, QFrame, QStackedWidget, QGraphicsDropShadowEffect, QLineEdit, QScrollArea, QInputDialog)
 
 from . import jobs
 from .workspace_widgets import BrandMark, CinemaCanvas, TimelineLanes, CathedralBanner
-from .music_library import find_songs, AUDIO, VIDEO
-from .config import Settings, draft_of, preset
+from .music_library import find_songs, search_libraries, interpret_song, default_library, AUDIO, VIDEO
+from .config import Settings, draft_of, preset, with_pace
 from .vision_director import LOCAL_MODEL
 from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay, exchange_shots, retarget, swap_shots
 
@@ -90,6 +90,9 @@ QScrollBar:vertical {background:transparent;width:8px;margin:0;}
 QScrollBar::handle:vertical {background:#d9d5ea;border-radius:4px;min-height:24px;}
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {height:0;}
 QToolTip {background:#15131f;color:#ffffff;border:0;padding:6px;}
+QTextBrowser#chatlog {background:#faf9fd;border:1px solid #ecebf3;border-radius:12px;padding:6px;}
+QPushButton#suggest {background:#f1edff;color:#5a3df0;border:0;border-radius:12px;padding:6px 12px;font-size:12px;font-weight:700;}
+QPushButton#suggest:hover {background:#e6dfff;color:#4a33c9;}
 '''
 STYLE = STYLE.replace('CHEVRON', (Path(__file__).parent/'resources'/'chevron.svg').as_posix())
 
@@ -131,6 +134,26 @@ def panel(kind='panel'):
 
 DIRECTORS=[('Local AI director • on this computer (Ollama)','local'),('Activity engine • no AI','activity'),
            ('Claude vision editor • cloud, optional','claude')]
+
+
+CHAT_SUGGESTIONS = ['Make it faster and more intense', 'Slow motion only on the biggest hits',
+                    'Use this song: <paste a link>', 'Make a 30 second Shorts version', 'Why did you open with that shot?']
+
+
+class ChatJob(QThread):
+    """One director chat turn off the UI thread."""
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, operation):
+        super().__init__()
+        self.operation = operation
+
+    def run(self):
+        try:
+            self.done.emit(self.operation())
+        except Exception as error:
+            self.failed.emit(str(error))
 
 
 class RenderJob(QThread):
@@ -180,6 +203,7 @@ class Studio(QMainWindow):
         for name,callback in [('Studio',lambda:self.screen.setCurrentIndex(0)),
                               ('Import',self.import_media),('AI Director',lambda:self.show_advanced(self.director_mode)),
                               ('Timeline',lambda:self.body_scroll.ensureWidgetVisible(self.lanes)),
+                              ('AI Chat',lambda:(self.body_scroll.ensureWidgetVisible(self.chat_panel),self.chat_input.setFocus())),
                               ('Effects',lambda:self.show_advanced(self.transition)),
                               ('Audio',self.import_music),
                               ('Export',self.export)]:
@@ -225,8 +249,11 @@ class Studio(QMainWindow):
         drop.setMinimumHeight(196); intake_layout.addWidget(drop)
         intake_layout.addWidget(label('SOUNDTRACK','eyebrow'))
         song_row=QHBoxLayout()
-        self.song_name=QLineEdit();self.song_name.setPlaceholderText('Type a song title from your music folder…')
+        self.song_name=QLineEdit();self.song_name.setPlaceholderText('Any song: paste a YouTube/Spotify link, a file path, or type a title…')
+        self.song_name.setToolTip('Paste a YouTube or Spotify track link, drop or browse to any audio/video file, '
+                                  'or type a title from your music folder. Press Enter to load it.')
         self.song_name.textEdited.connect(lambda:self.clear_music_selection())
+        self.song_name.returnPressed.connect(lambda:self.resolve_song())
         song_row.addWidget(self.song_name,1)
         library=QPushButton('Music folder');library.clicked.connect(self.choose_music_folder);song_row.addWidget(library)
         self.link_button=QPushButton('Add from link');self.link_button.setToolTip('Paste a YouTube video or Spotify track link')
@@ -249,6 +276,12 @@ class Studio(QMainWindow):
             self.export_preset.addItem(title,key)
         preset_row=QHBoxLayout();preset_row.addWidget(label('EXPORT FOR','eyebrow'));preset_row.addWidget(self.export_preset,1)
         intake_layout.addLayout(preset_row)
+        self.pace=QComboBox()
+        for title,key in [('Balanced • 1.5–4 s shots','balanced'),('Calm • 2–5 s shots','calm'),
+                          ('Fast • 1–3 s shots','fast'),('Hyper • 0.75–2.25 s shots','hyper')]:
+            self.pace.addItem(title,key)
+        pace_row=QHBoxLayout();pace_row.addWidget(label('PACE','eyebrow'));pace_row.addWidget(self.pace,1)
+        intake_layout.addLayout(pace_row)
         self.create_button=QPushButton('Create montage');self.create_button.setObjectName('primary')
         self.create_button.clicked.connect(lambda:self.export(automatic=True))
         intake_layout.addWidget(self.create_button)
@@ -331,6 +364,28 @@ class Studio(QMainWindow):
         self.alternates=[]
         track.addWidget(label('Built from the generated or loaded timeline. Manual clip editing is planned.','muted'))
         column.addWidget(timeline)
+
+        chat,talk=panel()
+        chat_heading=QHBoxLayout();chat_heading.addWidget(step(4,'Director chat'),1)
+        self.chat_chip=label('On this computer','chipTeal');chat_heading.addWidget(self.chat_chip)
+        talk.addLayout(chat_heading)
+        talk.addWidget(label('Ask for changes in your own words. The director explains its choices and adjusts '
+                             'the edit for you; every change goes through the same controls you can see.','muted'))
+        self.chat_log=QTextBrowser();self.chat_log.setObjectName('chatlog');self.chat_log.setOpenLinks(False)
+        self.chat_log.setMinimumHeight(170);self.chat_log.setMaximumHeight(260)
+        talk.addWidget(self.chat_log)
+        suggestions=QHBoxLayout();suggestions.setSpacing(6)
+        for text in CHAT_SUGGESTIONS[:4]:
+            chip=QPushButton(text);chip.setObjectName('suggest')
+            chip.clicked.connect(lambda _=False,t=text:self.use_suggestion(t));suggestions.addWidget(chip)
+        suggestions.addStretch();talk.addLayout(suggestions)
+        ask_row=QHBoxLayout()
+        self.chat_input=QLineEdit();self.chat_input.setPlaceholderText('Tell the director what you want… e.g. “more slow-mo on the drop”')
+        self.chat_input.returnPressed.connect(self.send_chat);ask_row.addWidget(self.chat_input,1)
+        self.chat_send=QPushButton('Send');self.chat_send.setObjectName('primary');self.chat_send.clicked.connect(self.send_chat)
+        ask_row.addWidget(self.chat_send);talk.addLayout(ask_row)
+        self.chat_panel=chat;self.chat_job=None;self.chat_session=None;self.last_report=None
+        column.addWidget(chat)
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
         progress_row=QHBoxLayout(); progress_row.addWidget(self.progress,1)
         self.cancel_button=QPushButton('Cancel');self.cancel_button.setEnabled(False)
@@ -342,7 +397,7 @@ class Studio(QMainWindow):
         main.setMinimumHeight(main.sizeHint().height())
         workspace.addWidget(main)
         inspector,right = panel()
-        right.addWidget(step(4,'Creative controls'))
+        right.addWidget(step(5,'Creative controls'))
         right.addWidget(label('Shape the story.','title'))
         self.analysis_label=label('SCENE ANALYSIS\nImport footage and choose Analyze.\nMotion/audio scores are heuristic; kill detection is planned.','muted')
         self.analysis_label.setWordWrap(True);right.addWidget(self.analysis_label)
@@ -466,6 +521,8 @@ class Studio(QMainWindow):
             saved={'2':'claude'}.get(str(self.preferences.value('director_mode',0)),'local')
         self.director_mode.setCurrentIndex(max(0,self.director_mode.findData(saved)))
         self.ai_brief.setText(str(self.preferences.value('brief','')))
+        self.pace.setCurrentIndex(max(0,self.pace.findData(str(self.preferences.value('pace','balanced')))))
+        self.pace.currentIndexChanged.connect(self.save_preferences)
         self.ai_model.editingFinished.connect(self.save_preferences)
         self.director_mode.currentIndexChanged.connect(self.save_preferences)
         self.ai_brief.editingFinished.connect(self.save_preferences)
@@ -481,7 +538,7 @@ class Studio(QMainWindow):
     def save_preferences(self,*args):
         for key,value in [('music_folder',self.music_folder),('local_model',self.ai_model.text().strip()),
                           ('director',self.director_mode.currentData()),('brief',self.ai_brief.text().strip()),
-                          ('story_tone',self.story_tone.currentData()),('closing_line',self.closing_line.text())]:
+                          ('story_tone',self.story_tone.currentData()),('pace',self.pace.currentData()),('closing_line',self.closing_line.text())]:
             self.preferences.setValue(key,value)
 
     def update_story_tone(self,*args):
@@ -555,15 +612,30 @@ class Studio(QMainWindow):
             self.music_folder=folder;self.save_preferences()
             self.status.setText('Music folder saved. Type a song title or artist and title; DRIFT matches local filenames.')
 
-    def resolve_song(self):
+    def music_library(self):
+        music=QStandardPaths.writableLocation(QStandardPaths.MusicLocation)
+        return Path(music)/'DRIFT' if music else default_library()
+
+    def resolve_song(self,then=None):
+        """Turn whatever is in the song box into a song. Links download first, then ``then`` runs."""
         if self.music_path and Path(self.music_path).is_file():return True
+        kind,value=interpret_song(self.song_name.text())
+        if kind=='link':
+            self.add_music_link(value,then=then);return False
+        if kind=='file':
+            self.select_music(value);return True
         try:
-            if not self.music_folder:
+            if kind=='empty':
+                QMessageBox.information(self,'Choose your music','Paste a YouTube or Spotify link, drop a song file, '
+                                        'or type a song title.');return False
+            library=self.music_library()
+            matches=search_libraries([self.music_folder,library],value)
+            if not matches and not self.music_folder:
                 self.choose_music_folder()
                 if not self.music_folder:return False
-            matches=find_songs(self.music_folder,self.song_name.text())
+                matches=search_libraries([self.music_folder],value)
             if not matches:
-                QMessageBox.information(self,'Song not found','No matching local audio. Try artist and title, choose another folder, or drop the song file.');return False
+                QMessageBox.information(self,'Song not found','No matching song in your music folders. Paste a YouTube or Spotify link instead, try artist and title, or drop the song file.');return False
             if len(matches)>1:
                 names=[str(p) for p in matches]
                 choice,ok=QInputDialog.getItem(self,'Choose your song','Several files match:',names,0,False)
@@ -640,10 +712,11 @@ class Studio(QMainWindow):
         self.add_files(files)
 
     def import_music(self):
-        path,_ = QFileDialog.getOpenFileName(self,'Choose music','','Audio (*.wav *.mp3 *.flac *.m4a *.ogg *.opus *.aac);;All files (*)')
+        path,_ = QFileDialog.getOpenFileName(self,'Choose music','',
+                                             'Audio or video with sound (*.wav *.mp3 *.flac *.m4a *.ogg *.opus *.aac *.mp4 *.mkv *.mov *.webm);;All files (*)')
         if path: self.select_music(path)
 
-    def add_music_link(self,link=None):
+    def add_music_link(self,link=None,then=None):
         from .music_sources import NOTICE, add_music, classify
         if self.job is not None:
             QMessageBox.information(self,'Busy','Wait for the current job to finish.');return
@@ -654,10 +727,9 @@ class Studio(QMainWindow):
             classify(link)
         except ValueError as error:
             QMessageBox.information(self,'Unsupported link',str(error));return
-        if not self.music_folder or not Path(self.music_folder).is_dir():
-            self.choose_music_folder()
-            if not self.music_folder:return
-        folder=self.music_folder
+        folder=self.music_folder if self.music_folder and Path(self.music_folder).is_dir() else str(self.music_library())
+        Path(folder).mkdir(parents=True,exist_ok=True)
+        self.after_music=then
         self.status.setText('Fetching music from link…')
         self.link_button.setEnabled(False);self.progress.setRange(0,0)
         self.job=RenderJob(lambda:add_music(link,folder))
@@ -677,6 +749,9 @@ class Studio(QMainWindow):
         self.progress.setRange(0,1);self.progress.setValue(1)
         self.link_button.setEnabled(True)
         self.job.deleteLater();self.job=None
+        then,self.after_music=getattr(self,'after_music',None),None
+        if then is not None and self.music_path and Path(self.music_path).is_file():
+            QTimer.singleShot(0,then)   # carry on with what the user asked for (e.g. Create montage)
 
     def preview_file(self,path):
         if path:
@@ -751,16 +826,18 @@ class Studio(QMainWindow):
     def delivery_settings(self):
         key=self.export_preset.currentData()
         if key and key!='custom':
-            return preset(key,duration=self.duration.value())
-        width,height=self.resolution.currentData()
-        return Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value(),quality=self.quality.currentData())
+            settings=preset(key,duration=self.duration.value())
+        else:
+            width,height=self.resolution.currentData()
+            settings=Settings(width=width,height=height,fps=self.fps.value(),duration=self.duration.value(),quality=self.quality.currentData())
+        return with_pace(settings,self.pace.currentData())
 
     def export(self,checked=False,replay=False,automatic=False,preview=False,timeline=None):
         if self.job is not None: return
         if timeline is not None: replay=True   # finalising an existing edit needs no clips or song lookup
         if not replay and not self.footage.count():
             QMessageBox.information(self,'Add your clips','Drop gameplay clips into the window first.');return
-        if not replay and not self.resolve_song():return
+        if not replay and not self.resolve_song(then=lambda:self.export(checked,replay,automatic,preview,timeline)):return
         if preview:
             cache=QStandardPaths.writableLocation(QStandardPaths.CacheLocation) or str(Path.home()/'.cache'/'drift')
             path=str(Path(cache)/'previews'/(datetime.now().strftime('preview-%Y%m%d-%H%M%S-')+uuid4().hex[:6]+'.mp4'))
@@ -785,7 +862,7 @@ class Studio(QMainWindow):
                 song=self.music_path; story=self.story()
                 if automatic:
                     story.update(faith_message=self.closing_line.text().strip(),edit_profile='cinematic',
-                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,
+                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,impacts=True,
                                  auto_music_section=self.auto_music_section.isChecked())
                 if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
@@ -805,7 +882,7 @@ class Studio(QMainWindow):
         self.job.start()
 
     def completed(self,report,path,replay,preview=False):
-        self.last_output=path
+        self.last_output=path;self.last_report=report
         analysis=Path(path).with_suffix('.analysis.json')
         if analysis.is_file():
             try:self.alternates=[c for c in json.loads(analysis.read_text()).get('candidates',[]) if not c.get('exclude')]
@@ -822,6 +899,160 @@ class Studio(QMainWindow):
         self.open_button.setEnabled(True); self.preview_file(path)
         if not replay: self.show_timeline(Timeline.load(Path(path).with_suffix('.timeline.json')))
         self.status.setText(self.status.text()+(' Preview ready — Render final when you like it.' if preview else ' Saved to '+path))
+
+    # ---- Director chat -------------------------------------------------------------------------
+    def chat_director(self):
+        """The chat backend: Claude when chosen as director, otherwise the local model."""
+        mode=self.director_mode.currentData()
+        model=self.ai_model.text().strip() or LOCAL_MODEL
+        key=('claude',None) if mode=='claude' else ('local',model)
+        if self.chat_session is None or self.chat_session[0]!=key:
+            from .edit_chat import EditChat
+            from .vision_director import ClaudeDirector, LocalDirector
+            director=ClaudeDirector() if key[0]=='claude' else LocalDirector(model,timeout=600)
+            self.chat_session=(key,EditChat(director))
+            self.chat_chip.setText('Claude • cloud' if key[0]=='claude' else 'On this computer')
+            self.chat_chip.setObjectName('chip' if key[0]=='claude' else 'chipTeal')
+            self.chat_chip.style().unpolish(self.chat_chip);self.chat_chip.style().polish(self.chat_chip)
+        return key,self.chat_session[1]
+
+    def chat_state(self):
+        shots=[]
+        if self.timeline is not None:
+            for i,clip in enumerate(self.timeline.clips):
+                moment=next((c for c in self.alternates
+                             if c['source']==clip.source and clip.start<=c['time']<=clip.start+clip.duration),{})
+                shots.append(dict(shot=i+1,seconds=round(clip.duration,2),slow_motion=clip.speed_profile!='normal',
+                                  punch_ins=len(clip.accents),event=moment.get('event'),note=moment.get('ai_note')))
+        result=None
+        if self.last_report:
+            rhythm=self.last_report.get('music_alignment') or {}
+            result=dict(duration=self.last_report.get('duration'),on_beat=rhythm.get('on_beat'),
+                        tempo_bpm=rhythm.get('tempo_bpm'),director=self.last_report.get('ai_director'))
+        return dict(song=Path(self.music_path).name if self.music_path else (self.song_name.text().strip() or None),
+                    gameplay_clips=self.footage.count(),length_seconds=self.duration.value(),pace=self.pace.currentData(),
+                    look=self.look.currentData(),tone=self.story_tone.currentData(),tones=list(STORY_TONES),
+                    closing_line=self.closing_line.text(),brief=self.ai_brief.text(),format=self.export_preset.currentData(),
+                    slow_motion=self.slowmo.currentData(),swishes=self.sfx.isChecked(),motion_blur=self.motion_blur.isChecked(),
+                    director=self.director_mode.currentData(),shot_count=len(shots),shots=shots[:40],
+                    has_preview=self.preview_timeline is not None,last_result=result)
+
+    def chat_bubble(self,who,text,kind='reply'):
+        from html import escape
+        colours={'user':('#6d4dff','#ffffff'),'reply':('#ffffff','#15131f'),'note':('#e4f7f5','#0b8a7e'),
+                 'warn':('#fff4dc','#a76a00')}
+        background,ink=colours[kind]
+        align='right' if kind=='user' else 'left'
+        width='68%' if kind in ('user','reply') else '52%'
+        # Qt rich text: tables honour width/align/bgcolor/cellpadding (CSS radii are ignored).
+        self.chat_log.append(f'<table width="{width}" align="{align}" bgcolor="{background}" cellpadding="8" '
+                             f'cellspacing="0" style="margin-bottom:6px;"><tr><td style="color:{ink};">'
+                             f'<span style="font-size:11px;font-weight:700;">{escape(who)}</span><br>{escape(text)}'
+                             '</td></tr></table>')
+        self.chat_log.verticalScrollBar().setValue(self.chat_log.verticalScrollBar().maximum())
+
+    def use_suggestion(self,text):
+        if '<' in text:
+            self.chat_input.setText(text.split('<')[0]);self.chat_input.setFocus()
+        else:
+            self.chat_input.setText(text);self.send_chat()
+
+    def send_chat(self):
+        message=self.chat_input.text().strip()
+        if not message or self.chat_job is not None:return
+        try:
+            key,session=self.chat_director()
+        except Exception as error:
+            self.chat_bubble('Director',str(error),'warn');return
+        state=self.chat_state()
+        self.chat_input.clear();self.chat_bubble('You',message,'user')
+        self.chat_send.setEnabled(False);self.chat_send.setText('Thinking…')
+
+        def turn():
+            if key[0]=='local':
+                from .local_ai import readiness
+                ready,note=readiness(key[1])
+                if not ready:raise ValueError(note)
+            return session.ask(message,state)
+        self.chat_job=ChatJob(turn)
+        self.chat_job.done.connect(self.chat_replied)
+        self.chat_job.failed.connect(lambda m:self.chat_bubble('Director',m,'warn'))
+        self.chat_job.finished.connect(self.chat_finished)
+        self.chat_job.start()
+
+    def chat_finished(self):
+        self.chat_send.setEnabled(True);self.chat_send.setText('Send')
+        self.chat_job.deleteLater();self.chat_job=None
+
+    def chat_replied(self,result):
+        self.chat_bubble('Director',result['reply'])
+        for action,value,reason in result['rejected']:
+            self.chat_bubble('Not applied',f'{action} “{value}”: {reason}','warn')
+        self.apply_chat_actions(list(result['actions']))
+
+    def apply_chat_actions(self,actions):
+        """Apply validated chat actions through the normal controls; a song link pauses until it downloads."""
+        while actions:
+            action,value=actions.pop(0)
+            if action=='set_music':
+                self.song_name.setText(value);self.clear_music_selection()
+                kind,_=interpret_song(value)
+                if kind=='link':
+                    self.chat_bubble('Applied',f'Fetching the song from the link…','note')
+                    rest=list(actions)
+                    self.add_music_link(interpret_song(value)[1],then=lambda:self.apply_chat_actions(rest))
+                    return
+                if not self.resolve_song():
+                    self.chat_bubble('Not applied',f'Could not find the song “{value}”','warn');continue
+                self.chat_bubble('Applied',f'Song → {Path(self.music_path).name}','note');continue
+            note=self.apply_chat_action(action,value)
+            self.chat_bubble('Applied' if note[0] else 'Not applied',note[1],'note' if note[0] else 'warn')
+        self.save_preferences()
+
+    def apply_chat_action(self,action,value):
+        def choose(combo,data,name):
+            index=combo.findData(data)
+            if index<0:return False,f'{name}: “{value}” is not available'
+            combo.setCurrentIndex(index);return True,f'{name} → {combo.currentText()}'
+        if action=='set_pace':return choose(self.pace,value,'Pace')
+        if action=='set_look':return choose(self.look,value,'Look')
+        if action=='set_tone':return choose(self.story_tone,value,'Story tone')
+        if action=='set_format':return choose(self.export_preset,value,'Export')
+        if action=='set_slow_motion':return choose(self.slowmo,value,'Slow motion')
+        if action=='set_length':
+            self.duration.setValue(float(value));return True,f'Length → {self.duration.value():g} s'
+        if action=='set_closing_line':
+            self.closing_line.setText(value);return True,f'Closing line → “{value}”' if value else 'Closing line removed'
+        if action=='set_brief':
+            self.ai_brief.setText(value);return True,f'Brief → {value}'
+        if action in ('set_swishes','set_motion_blur'):
+            box=self.sfx if action=='set_swishes' else self.motion_blur
+            box.setChecked(value=='on');return True,f'{box.text()} → {value}'
+        if action in ('move_shot','swap_shot'):
+            if self.timeline is None:return False,'Create a montage first'
+            row=int(value.split()[0].replace('shot',''))-1
+            if not 0<=row<len(self.timeline.clips):return False,'No such shot'
+            self.timeline_table.selectRow(row)
+            if action=='move_shot':
+                step=-1 if value.endswith('earlier') else 1
+                if not 0<=row+step<len(self.timeline.clips):return False,'Shot is already at that end'
+                try:edited=exchange_shots(self.timeline,row,row+step)
+                except ValueError as error:return False,str(error)
+                self.show_timeline(edited);self.timeline_table.selectRow(row+step)
+                return True,f'Moved shot {row+1} {value.split()[-1]} • Render loaded timeline to see it'
+            used=lambda c:any(o.source==c['source'] and o.start<=c['time']<=o.start+o.duration for o in self.timeline.clips)
+            for option in sorted((c for c in self.alternates if not used(c)),key=lambda c:-c['score'])[:5]:
+                edited,applied,rejected=swap_shots(self.timeline,[(row,option)])
+                if applied:
+                    self.show_timeline(edited);self.timeline_table.selectRow(row)
+                    return True,f'Swapped shot {row+1} for an unused moment (score {option["score"]:.2f}) • Render loaded timeline to see it'
+            return False,'No unused moment fits that shot'
+        if action=='make':
+            if self.job is not None:return False,'A job is already running'
+            if value=='final':self.finalize_preview()
+            else:self.export(automatic=True,preview=value=='preview')
+            return True,{'preview':'Making a quick preview','montage':'Creating the montage','final':'Rendering the final from the preview'}[value]
+        return False,f'Unknown action {action}'
 
     def finalize_preview(self):
         if self.preview_timeline is None:return

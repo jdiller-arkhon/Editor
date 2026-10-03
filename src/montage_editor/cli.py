@@ -32,7 +32,9 @@ def main():
     commands.add_parser('doctor')
     create = commands.add_parser('create', help='Analyze gameplay and music, then render')
     create.add_argument('--gameplay', nargs='+', required=True)
-    create.add_argument('--music', required=True)
+    create.add_argument('--music', required=True,
+                        help='Song file (audio or video), or a YouTube/Spotify track link (downloaded to ~/Music/DRIFT)')
+    create.add_argument('--pace', choices=['calm', 'balanced', 'fast', 'hyper'], default='balanced')
     create.add_argument('--output', required=True)
     create.add_argument('--duration', type=float, default=30)
     create.add_argument('--width', type=int, default=1280)
@@ -90,7 +92,16 @@ def main():
         elif args.command == 'render':
             result = render(Timeline.load(args.timeline), args.output)
         else:
-            settings = Settings(width=args.width, height=args.height, fps=args.fps, duration=args.duration,quality=args.quality)
+            from .config import with_pace
+            from .music_library import default_library, interpret_song
+            settings = with_pace(Settings(width=args.width, height=args.height, fps=args.fps, duration=args.duration,
+                                          quality=args.quality), args.pace)
+            kind, value = interpret_song(args.music)
+            if kind == 'link':
+                from .music_sources import NOTICE, add_music
+                logging.info(NOTICE)
+                default_library().mkdir(parents=True, exist_ok=True)
+                args.music = add_music(value, str(default_library()))['path']
             story = None
             if args.story:
                 from pathlib import Path
