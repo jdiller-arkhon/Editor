@@ -192,3 +192,18 @@ def push_for_pan(velocity):
     if abs(velocity) < PAN_MINIMUM:
         return None
     return 'smoothleft' if velocity < 0 else 'smoothright'
+
+
+PULSE_LIGHT = .1             # exposure lift at the downbeat, decaying over ~0.25 s
+PULSE_SPLIT = 1/240          # RGB split as a fraction of frame width, for 3 frames
+
+
+def pulse_filter(times, fps, width):
+    """Beat FX for one shot: an exposure pulse and a brief chromatic split on each local time."""
+    if not times:
+        return ''
+    light = '+'.join(f'between(t,{a:.4f},{a+.3:.4f})*exp(-(t-{a:.4f})/0.08)' for a in times)
+    split = max(2, round(width*PULSE_SPLIT/2)*2)
+    window = '+'.join(f'between(t,{a:.4f},{a+3/fps:.4f})' for a in times)
+    return (f"eq=eval=frame:brightness='{PULSE_LIGHT}*min(1,{light})',"
+            f"rgbashift=rh=-{split}:bh={split}:enable='{window}'")

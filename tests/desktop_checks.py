@@ -311,6 +311,22 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(after,[str(downloaded.resolve())])                                # then carried on
             window.close()
 
+    def test_every_format_export_uses_the_loaded_edit(self):
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'fmt.ini'),QSettings.IniFormat))
+            self.assertFalse(window.formats_button.isEnabled())
+            timeline=Timeline(1,'song.wav',Settings().__dict__,[Clip('v.mp4',0,2,.5)])
+            window.show_timeline(timeline)
+            self.assertTrue(window.formats_button.isEnabled())
+            with patch('montage_editor.desktop.RenderJob') as job, patch('montage_editor.pipeline.render_formats') as formats:
+                window.export_formats()
+                job.call_args.args[0]()
+                self.assertIs(formats.call_args.args[0],timeline)
+            window.formats_done([dict(format='youtube-1080p30',path=str(Path(d)/'a.mp4'),width=1920,height=1080,duration=2,full_decode=True),
+                                 dict(format='shorts-1080x1920',path=str(Path(d)/'b.mp4'),width=1080,height=1920,duration=2,full_decode=True)])
+            self.assertIn('shorts-1080x1920 1080×1920',window.status.text())
+            window.job=None;window.close()
+
     def test_story_tone_is_subtle_by_default_and_custom_line_survives_reload(self):
         with tempfile.TemporaryDirectory() as d:
             prefs=QSettings(str(Path(d)/'tone.ini'),QSettings.IniFormat)

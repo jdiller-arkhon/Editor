@@ -381,3 +381,24 @@ def boundary_styles(timeline, music):
         else:
             styles.append('cut')
     return styles
+
+
+def beat_pulses(music, duration, top=.75, limit=24):
+    """Output times for beat FX: every drop, plus downbeats where the music is in its loudest quarter.
+
+    At most one pulse per bar (downbeats are a bar apart) and ``limit`` in total, loudest first.
+    Returns [] for music without a measured beat grid.
+    """
+    downbeats = [float(t) for t in music.get('downbeats', []) if .25 <= t <= duration-.4]
+    energy = np.asarray(music.get('energy', []), dtype=float)
+    if not downbeats or not len(energy):
+        return []
+    hop = music.get('hop_seconds', .05)
+    smooth = smoothed_energy(energy, hop)
+    level = lambda t: float(smooth[min(len(smooth)-1, int(t/hop))])
+    threshold = float(np.quantile(smooth[:max(1, int(duration/hop))], top))
+    drops = {round(float(p['time']), 3) for p in music.get('phrases', []) if 'drop' in p['kinds']
+             and .25 <= p['time'] <= duration-.4}
+    chosen = {t for t in downbeats if level(t) >= threshold} | drops
+    ranked = sorted(chosen, key=lambda t: (-(t in drops), -level(t), t))[:limit]
+    return sorted(round(t, 4) for t in ranked)

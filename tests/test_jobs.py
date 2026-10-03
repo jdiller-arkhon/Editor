@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from montage_editor import jobs
@@ -52,6 +53,46 @@ class JobTests(unittest.TestCase):
             jobs.run(['ffmpeg', '-v', 'error', '-i', '/nonexistent.mp4', '-f', 'null', '-'])
         self.assertEqual(jobs.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'anullsrc', '-t', '0.1',
                                    '-f', 's16le', 'pipe:1']).returncode, 0)
+
+    def test_parallel_keeps_order_runs_concurrently_and_cancels_every_worker(self):
+        import sys
+        sleep = [sys.executable, '-c', 'import time; time.sleep(1)']
+        began = time.monotonic()
+        seen = []
+        with jobs.job(progress=lambda f, m: seen.append((round(f, 2), m))):
+            results = jobs.parallel(lambda n: (jobs.run(sleep), n*n)[1], range(4), 'step {done}/{total}', count=4)
+        self.assertEqual(results, [0, 1, 4, 9])
+        # ~1 s of real time per job x 4 jobs: concurrent, not sequential.
+        self.assertGreater(time.monotonic()-began, .9)          # each job really takes ~1 s
+        self.assertLess(time.monotonic()-began, 2.5)
+        self.assertEqual(seen[-1], (1.0, 'step 4/4'))
+        with self.assertRaises(ZeroDivisionError):
+            jobs.parallel(lambda n: 1/n, [2, 1, 0, 3], count=2)
+        cancel = threading.Event()
+        threading.Timer(.5, cancel.set).start()
+        long = ['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360', '-t', '600', '-f', 'null', '-']
+        began = time.monotonic()
+        with jobs.job(cancel), self.assertRaises(jobs.Cancelled):
+            jobs.parallel(lambda n: jobs.run(long), range(6), count=3)
+        self.assertLess(time.monotonic()-began, 5)    # running workers were stopped, the rest never started
+        with unittest.mock.patch.dict(os.environ, {'DRIFT_WORKERS': '1'}):
+            self.assertEqual(jobs.workers(), 1)
+
+    def test_parallel_analysis_matches_sequential_analysis(self):
+        from montage_editor.pipeline import analyze_gameplay, probe
+        with tempfile.TemporaryDirectory() as d:
+            video = Path(d)/'long.mp4'
+            # 75 s: three 30 s analysis chunks, so chunk order and continuity matter.
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=15', '-f', 'lavfi',
+                            '-i', 'sine=f=300:beep_factor=6:sample_rate=8000', '-t', '75', '-c:v', 'libx264', '-preset',
+                            'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(video)], check=True)
+            media = probe(video)
+            with unittest.mock.patch.dict(os.environ, {'DRIFT_WORKERS': '1'}):
+                sequential = analyze_gameplay(media, Settings())
+            with unittest.mock.patch.dict(os.environ, {'DRIFT_WORKERS': '4'}):
+                parallel = analyze_gameplay(media, Settings())
+        self.assertEqual(sequential, parallel)
+        self.assertGreater(len(parallel), 5)
 
     def test_spans_nest(self):
         seen = []

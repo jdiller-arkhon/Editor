@@ -19,7 +19,8 @@ from unittest.mock import patch
 from montage_editor import jobs, local_ai
 from montage_editor.config import Settings
 from montage_editor.pipeline import create_montage
-from montage_editor.vision_director import (DIRECT_SYSTEM, DIRECT_SYSTEM_LOCAL, REVIEW_SYSTEM, LocalDirector,
+from montage_editor.vision_director import (CHECK_SYSTEM, DIRECT_SYSTEM, DIRECT_SYSTEM_LOCAL, REVIEW_SYSTEM, LocalDirector,
+                                            checklist_moment, validate_review,
                                             enforce_playbook)
 from test_rhythm import write_song
 from test_vision_director import judge
@@ -86,11 +87,19 @@ class FakeOllama:
             content = dict(swaps=[], notes='Cut is strong.')
         elif system.startswith(DIRECT_SYSTEM):
             content = dict(slots=[], arc='Keep the draft.')
+        elif system == CHECK_SYSTEM:
+            # Clip 0 of each batch is a scoreboard, clip 1 a kill, the rest walking.
+            ids = [int(line.split()[1].rstrip(':')) for line in user.splitlines() if line.startswith('Clip ')]
+            content = dict(moments=[
+                dict(id=i, observations='Scoreboard covers the game.', overlay_frames=[2, 3, 4], enemy_visible=False,
+                     firing=False, kill=False, peak_frame=3, highlight=1) if i == 0 else
+                dict(id=i, observations='Two opponents burst under rocket fire.', overlay_frames=[], enemy_visible=True,
+                     firing=True, kill=True, peak_frame=5, highlight=10) if i == 1 else
+                dict(id=i, observations='Walking down a corridor.', overlay_frames=[], enemy_visible=False,
+                     firing=False, kill=False, peak_frame=3, highlight=3) for i in ids])
         else:
             ids = [int(line.split()[1].rstrip(':')) for line in user.splitlines() if line.startswith('Candidate ')]
             content = judge(ids)
-            for moment in content['moments']:
-                moment['observations'] = 'HUD visible; two opponents drop.'
         return {'model': payload['model'], 'message': {'role': 'assistant', 'content': json.dumps(content)},
                 'done': True, 'done_reason': 'stop', 'total_duration': 2_500_000_000,
                 'prompt_eval_count': 900, 'eval_count': 120}
@@ -131,8 +140,9 @@ class LocalDirectorTests(unittest.TestCase):
         first = self.ollama.chats[0]
         self.assertEqual(first['model'], 'qwen2.5vl:7b')
         self.assertFalse(first['stream'])
+        self.assertEqual(first['messages'][0]['content'], CHECK_SYSTEM)  # a checklist, not one holistic grade
         item = first['format']['properties']['moments']['items']
-        self.assertEqual(item['required'][0], 'observations')            # describe before judging
+        self.assertEqual(item['required'][:3], ['id', 'observations', 'overlay_frames'])
         # One judgement per strip is enforced by the schema itself.
         self.assertEqual((first['format']['properties']['moments']['minItems'], item['properties']['id']['enum']),
                          (2, [0, 1]))
@@ -147,7 +157,8 @@ class LocalDirectorTests(unittest.TestCase):
         # Batch-local ids map back to the right moments: id 0 of each batch is the menu screen.
         self.assertTrue(by_time[.9]['exclude'] and by_time[.7]['exclude'] and by_time[.5]['exclude'])
         # Local judgements are blended with the measured activity score (60/40).
-        self.assertEqual(by_time[.8]['event'], 'multi_elimination')
+        self.assertEqual(by_time[.8]['event'], 'elimination')
+        self.assertIn('rocket fire', by_time[.8]['ai_note'])
         self.assertAlmostEqual(by_time[.8]['score'], .6*1.0+.4*.8)
         self.assertAlmostEqual(by_time[.6]['score'], .6*1.0+.4*.6)
         self.assertEqual(by_time[.8]['judged_by'], 'local vision review (qwen2.5vl:7b)')
@@ -192,6 +203,24 @@ class LocalDirectorTests(unittest.TestCase):
         scores = {4: .7, 2: .5, 1: .45, 3: .9, 0: .4, 5: .3}
         self.assertEqual(enforce_playbook(good, facts, scores), (good, []))
 
+    def test_checklist_answers_become_validated_judgements(self):
+        walk = dict(id=0, observations='Walking.', overlay_frames=[], enemy_visible=False, firing=False, kill=False,
+                    peak_frame=2, highlight=2)
+        self.assertEqual({k: v for k, v in checklist_moment(walk).items() if k != 'checklist'},
+                         dict(id=0, highlight=2, event='movement', usable=True, peak_frame=2, note='Walking.'))
+        fight = dict(walk, enemy_visible=True, firing=True, highlight=6)
+        self.assertEqual((checklist_moment(fight)['event'], checklist_moment(fight)['highlight']), ('fight', 6))
+        kill = dict(fight, kill=True, highlight=9)
+        self.assertEqual((checklist_moment(kill)['event'], checklist_moment(kill)['highlight']), ('elimination', 10))
+        # One overlaid frame is a HUD notice; two or more mean the clip is a scoreboard/death screen.
+        once = checklist_moment(dict(kill, overlay_frames=[2], peak_frame=2))
+        self.assertTrue(once['usable']); self.assertIn(once['peak_frame'], (1, 3))   # peak moved off the overlay
+        covered = checklist_moment(dict(kill, overlay_frames=[3, 4, 9]))
+        self.assertEqual((covered['usable'], covered['event'], covered['highlight']), (False, 'menu_or_loading', 0))
+        # Malformed answers are passed on as invalid, never guessed.
+        with self.assertRaises(ValueError):
+            validate_review(dict(moments=[checklist_moment(dict(walk, highlight='high'))]), 1)
+
     def test_failures_are_explained_and_hosts_are_local_only(self):
         with self.assertRaisesRegex(ValueError, 'only talks to Ollama on this computer'):
             LocalDirector(host='http://example.com:11434')
@@ -200,7 +229,7 @@ class LocalDirectorTests(unittest.TestCase):
         self.ollama.reply = {'error': 'model requires more system memory'}
         with self.assertRaisesRegex(ValueError, 'more system memory'):
             LocalDirector(host=self.ollama.host).review(self.candidates())
-        self.ollama.reply = {'message': {'content': '{"moments": [{"id": 99}]}'}, 'done_reason': 'stop'}
+        self.ollama.reply = {'message': {'content': '{"moments": [{"id": 99}]}'}, 'done_reason': 'stop'}   # unknown clip
         with self.assertRaisesRegex(ValueError, 'invalid or unknown moment'):
             LocalDirector(host=self.ollama.host).review(self.candidates())
         self.ollama.reply = {'message': {'content': '{"moments": ['}, 'done_reason': 'length'}

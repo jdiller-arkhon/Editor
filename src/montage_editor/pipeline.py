@@ -18,7 +18,7 @@ from .music_sections import choose_section
 from . import screen_analysis as screens
 from . import craft
 from . import jobs
-from .rhythm import alignment_report, beat_grid, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
+from .rhythm import alignment_report, beat_grid, beat_pulses, boundary_styles, excerpt_grid, plan_cuts, usable as rhythm_usable
 
 LOG = logging.getLogger(__name__)
 
@@ -119,18 +119,32 @@ def analyze_gameplay(media, settings, report=None):
     """
     if not any(s['codec_type'] == 'video' for s in media['streams']):
         raise ValueError('Gameplay input must contain a video stream')
-    mask = screens.learn_hud_mask(media['path'], media['duration'])
-    motion, hud = [], []
-    previous = None
     W, H = screens.WIDTH, screens.HEIGHT
-    # Chunked decode bounds raw frame memory. Continuity is retained between chunks.
-    for start in np.arange(0, media['duration'], 30):
+    has_audio = any(s['codec_type'] == 'audio' for s in media['streams'])
+
+    def decode(start):
         raw = run(['ffmpeg', '-v', 'error', '-ss', str(start), '-i', media['path'],
                    '-t', str(min(30, media['duration']-start)), '-an',
                    '-vf', f'fps={settings.analysis_fps},scale={W}:{H},format=gray',
                    '-threads', '1', '-f', 'rawvideo', 'pipe:1']).stdout
         count = len(raw)//(W*H)
-        for frame in np.frombuffer(raw[:count*W*H], dtype=np.uint8).reshape(count, H, W):
+        return np.frombuffer(raw[:count*W*H], dtype=np.uint8).reshape(count, H, W)
+    # Independent decodes run concurrently: the HUD mask, gameplay loudness, audio transients
+    # and 30 s video chunks (chunking also bounds raw frame memory).
+    work = [('mask', None)] + ([('audio', None), ('flux', None)] if has_audio else []) + \
+        [('chunk', start) for start in np.arange(0, media['duration'], 30)]
+    done = jobs.parallel(lambda w: screens.learn_hud_mask(media['path'], media['duration']) if w[0] == 'mask' else
+                         audio_envelope(media['path'], media['duration']) if w[0] == 'audio' else
+                         screens.transients(media['path'], media['duration']) if w[0] == 'flux' else
+                         decode(w[1]), work)
+    results = dict((kind, value) for (kind, _), value in zip(work, done) if kind != 'chunk')
+    mask = results['mask']
+    motion, hud = [], []
+    previous = None
+    for (kind, _), frames in zip(work, done):
+        if kind != 'chunk':
+            continue
+        for frame in frames:          # continuity is kept across chunk boundaries
             full = frame.astype(np.float32)
             current = full.reshape(H//2, 2, W//2, 2).mean(axis=(1, 3))
             motion.append(float(np.mean(abs(current-previous)))/255 if previous is not None else 0)
@@ -141,10 +155,10 @@ def analyze_gameplay(media, settings, report=None):
         raise ValueError('Gameplay contains no decoded frames')
     scores = np.asarray(motion)
     times = np.arange(len(scores))/settings.analysis_fps
-    if any(s['codec_type'] == 'audio' for s in media['streams']):
-        audio = audio_envelope(media['path'], media['duration'])
+    if has_audio:
+        audio = results['audio']
         loudness = np.interp(times, np.arange(len(audio))*.05, audio) if len(audio) else scores*0
-        flux, hop = screens.transients(media['path'], media['duration'])
+        flux, hop = results['flux']
         radius = max(1, int(round(.25/hop)))
         impact = np.array([flux[max(0, int(t/hop)-radius):int(t/hop)+radius+1].max()
                            if int(t/hop) < len(flux) else 0.0 for t in times])
@@ -221,6 +235,10 @@ class Timeline:
     match_shots: bool = False
     bookends: bool = False
     impacts: bool = False
+    # Programme-time downbeats for beat FX (exposure pulse, RGB split, shake); empty = none.
+    pulses: list = field(default_factory=list)
+    # Integrated loudness target when normalize_audio is on (YouTube/TikTok/Instagram play ~-14).
+    target_lufs: float = -16.0
 
     def validate(self):
         if self.version != 1 or not self.clips:
@@ -236,6 +254,12 @@ class Timeline:
             raise ValueError('Unsupported transition')
         if not np.isfinite(self.transition_duration) or not 0 < self.transition_duration <= 1:
             raise ValueError('Transition duration must be in (0, 1]')
+        total = sum(c.duration for c in self.clips)
+        if len(self.pulses) > 64 or not all(isinstance(t, (int, float)) and np.isfinite(t) and 0 <= t < total
+                                            for t in self.pulses):
+            raise ValueError('Beat pulses must lie inside the programme')
+        if not isinstance(self.target_lufs, (int, float)) or not -24 <= self.target_lufs <= -9:
+            raise ValueError('Loudness target must be between -24 and -9 LUFS')
         if not all(isinstance(v, bool) for v in (self.punch_through, self.match_shots, self.bookends, self.impacts)):
             raise ValueError('punch_through must be true or false')
         if (self.interpolation not in craft.INTERPOLATION or self.look not in craft.LOOKS or
@@ -684,17 +708,20 @@ def render_handles(timeline, settings, temporary, matches=None):
         count = int(run(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries',
                          'stream=nb_read_frames', '-of', 'csv=p=0', str(path)]).stdout.decode().strip() or 0)
         return (path, count) if count >= frames else None
-    result = []
-    for i, clip in enumerate(timeline.clips):
+    for clip in timeline.clips:
         durations.setdefault(clip.source, probe(clip.source)['duration'])
-        pre = post = None
+    wanted = []
+    for i, clip in enumerate(timeline.clips):
         if i and blended[i-1] and free(clip, clip.start-length, clip.start):
-            pre = write(clip, clip.start-length, f'pre-{i:05d}.mkv', matches[i])
+            wanted.append((i, 0, clip, clip.start-length, f'pre-{i:05d}.mkv'))
         end = clip.start+clip.duration   # every profile consumes exactly its duration
         if i < len(blended) and blended[i] and free(clip, end, end+length):
-            post = write(clip, end, f'post-{i:05d}.mkv', matches[i])
-        result.append((pre, post))
-    return result
+            wanted.append((i, 1, clip, end, f'post-{i:05d}.mkv'))
+    written = jobs.parallel(lambda w: write(w[2], w[3], w[4], matches[w[0]]), wanted)
+    result = [[None, None] for _ in timeline.clips]
+    for (i, side, *_), handle in zip(wanted, written):
+        result[i][side] = handle
+    return [tuple(r) for r in result]
 
 
 def render(timeline, output):
@@ -738,10 +765,10 @@ def render(timeline, output):
         if timeline.match_shots:
             jobs.report(0, 'Matching exposure and colour across shots')
             matches, corrections = craft.match_filters(
-                [craft.shot_statistics(c.source, c.start, c.duration) for c in timeline.clips])
-        for i,clip in enumerate(timeline.clips):
+                jobs.parallel(lambda c: craft.shot_statistics(c.source, c.start, c.duration), timeline.clips))
+        def render_shot(job):
+            i,clip=job
             LOG.info('Rendering clip %d/%d', i+1, len(timeline.clips))
-            jobs.report(.75*i/len(timeline.clips), f'Rendering shot {i+1} of {len(timeline.clips)}')
             transition_filter = ''
             if timeline.transition in ('fade_black','fade_white'):
                 color = 'black' if timeline.transition == 'fade_black' else 'white'
@@ -754,9 +781,14 @@ def render(timeline, output):
                 # Closing line fades in a beat into the final shot, set in the display face.
                 appear = min(.35, clip.duration/4)
                 font = 'fontfile=title.ttf:' if (temporary/'title.ttf').is_file() else ''
+                # Kinetic title: rises ~2% of the frame height with an ease-out and grows 8% as it fades in.
+                size=max(18,settings.height//16)
+                rise=max(4,settings.height//45)
+                ease=f'min(1,max(0,t-{appear:.3f})/0.5)'
                 title_filter = (f",drawtext={font}textfile=faith-title.txt:expansion=none:fontcolor=white:"
-                                f"fontsize={max(18,settings.height//16)}:shadowcolor=black@0.55:shadowx=0:shadowy=2:"
-                                f"x=(w-tw)/2:y=h*0.78-th/2:alpha='if(lt(t,{appear:.3f}),0,min(1,(t-{appear:.3f})/0.45))'")
+                                f"fontsize='{size}*(0.92+0.08*{ease})':shadowcolor=black@0.55:shadowx=0:shadowy=2:"
+                                f"x=(w-tw)/2:y='h*0.78-th/2+{rise}*pow(1-{ease},2)':"
+                                f"alpha='if(lt(t,{appear:.3f}),0,min(1,(t-{appear:.3f})/0.45))'")
             elif timeline.faith_message and last:
                 title_filter = (f',drawtext=textfile=faith-title.txt:expansion=none:fontcolor=white:'
                                 f'fontsize={max(18,settings.height//22)}:box=1:boxcolor=black@0.6:'
@@ -787,6 +819,10 @@ def render(timeline, output):
             hit=impact_time(clip) if timeline.impacts else None
             if hit is not None:
                 blur=(blur+',' if blur else '')+craft.impact_filter(hit,settings.fps)
+            offset=sum(c.duration for c in timeline.clips[:i])
+            local=[round(t-offset,4) for t in timeline.pulses if offset<=t<offset+clip.duration-.05]
+            if local:
+                blur=(blur+',' if blur else '')+craft.pulse_filter(local,settings.fps,settings.width)
             video_filter=(f'scale={settings.width}:{settings.height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,'
                           f'pad={settings.width}:{settings.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
                           +(matches[i]+',' if matches[i] else '')+(look+',' if look else '')+
@@ -797,7 +833,8 @@ def render(timeline, output):
                 decay=max(1,min(timeline.transition_duration,clip.duration/2)*settings.fps/2)
                 video_filter+=(f",zoompan=z='1+0.06*(exp(-on/{decay})+exp(-({frames}-on)/{decay}))':"
                                f"x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={settings.width}x{settings.height}:fps={settings.fps}")
-            shakes=sorted(set(clip.accents)|({round(hit,4)} if hit is not None else set()))
+            shakes=sorted(set(clip.accents)|({round(hit,4)} if hit is not None else set())|
+                          {t for t in local if .05<t<clip.duration-.05})
             if shakes:
                 video_filter+=accent_filter(shakes,settings)
             graph.append('[vret]'+video_filter+transition_filter+title_filter+'[vout]')
@@ -811,6 +848,8 @@ def render(timeline, output):
             run(['ffmpeg','-v','error','-ss',str(clip.start),'-i',clip.source,
                  '-filter_complex_threads','1','-filter_complex',';'.join(graph),'-map','[vout]','-map','[aout]',
                  '-t',str(clip.duration)] + LOSSLESS + [str(temporary/f'{i:05d}.mkv')],cwd=temporary)
+        with jobs.span(0, .72):
+            jobs.parallel(render_shot, list(enumerate(timeline.clips)), 'Rendering shots • {done} of {total}')
         pieces = [(temporary/f'{i:05d}.mkv',clip.duration) for i,clip in enumerate(timeline.clips)]
         boundaries = []
         handles = None
@@ -864,7 +903,7 @@ def render(timeline, output):
             measure_inputs[2] = 'info'
             jobs.report(.86,'Measuring loudness for mastering')
             measure = run(measure_inputs + ['-filter_complex',';'.join(filters)+
-                ';[mixed]loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json[measured]',
+                f';[mixed]loudnorm=I={timeline.target_lufs:g}:TP=-1.5:LRA=11:print_format=json[measured]',
                 '-map','[measured]','-t',str(duration),'-f','null','-'])
             stderr = measure.stderr.decode(errors='replace')
             values = json.loads(stderr[stderr.rfind('{'):stderr.rfind('}')+1])
@@ -872,7 +911,7 @@ def render(timeline, output):
                     'measured_LRA':'input_lra','measured_thresh':'input_thresh','offset':'target_offset'}
             if not all(np.isfinite(float(values[key])) for key in keys.values()):
                 raise ValueError('Cannot master a silent or invalid audio mix')
-            mastering = 'loudnorm=I=-16:TP=-1.5:LRA=11:linear=true:'+':'.join(
+            mastering = f'loudnorm=I={timeline.target_lufs:g}:TP=-1.5:LRA=11:linear=true:'+':'.join(
                 f'{key}={values[value]}' for key,value in keys.items())+','
         filters.append('[mixed]'+mastering+'alimiter=limit=0.95:level=0:latency=1,aresample=48000[audio]')
         crf,preset = {'draft':('23','fast'),'high':('16','slow'),'master':('12','slow')}[settings.quality]
@@ -985,6 +1024,7 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
                            match_shots=bool(story.get('match_shots',False)),
                            bookends=bool(story.get('bookends',False)),
                            impacts=bool(story.get('impacts',False)),
+                           target_lufs=float(story.get('target_lufs',-16.0)),
                            reframe=('follow' if settings.height>settings.width else 'fit')
                                    if story.get('reframe','fit')=='auto' else story.get('reframe','fit'))
     if vision is not None and getattr(ai_editor, 'direct_edit', False) and hasattr(ai_editor, 'plan_edit'):
@@ -1005,6 +1045,8 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     if (timeline.transition == 'cinematic' and str(analysis.get('cut_mode')).startswith('beats')
             and not timeline.boundary_transitions):
         timeline = replace(timeline, boundary_transitions=boundary_styles(timeline, analysis))
+    if story and story.get('beat_fx') and str(analysis.get('cut_mode')).startswith('beats'):
+        timeline = replace(timeline, pulses=beat_pulses(analysis, sum(c.duration for c in timeline.clips)))
     pan_changes = []
     if timeline.transition in BLENDS and timeline.boundary_transitions:
         timeline, pan_changes = match_push_directions(timeline)
@@ -1020,8 +1062,41 @@ def create_montage(gameplay, music, output, settings, story=None, ai_model=None,
     if vision:
         report['ai_editor'] = {k: vision[k] for k in ('provider','model','reviewed','usable','events','seconds') if k in vision}
     report['motion_matched_pushes'] = pan_changes
+    report['beat_pulses'] = len(timeline.pulses)
     report['requested_duration'] = settings.duration
     report['shortened'] = sum(c.duration for c in timeline.clips) < settings.duration-.01
     report['music_alignment'] = alignment_report(timeline, analysis)
     sidecars[2].write_text(json.dumps(report, indent=2))
     return report
+
+
+FORMATS = ('youtube-1080p30', 'shorts-1080x1920', 'instagram-1080x1350')
+
+
+def render_formats(timeline, output, formats=FORMATS):
+    """The same edit delivered for several platforms: ``<output stem>-<format>.mp4`` each.
+
+    Shot timing never changes (the frame rate stays the timeline's); portrait and 4:5 deliveries
+    follow the action with a moving crop instead of letterboxing. Every file is validated.
+    """
+    from .config import PRESETS, preset
+    output = Path(output)
+    unknown = [f for f in formats if f not in PRESETS]
+    if unknown or not formats:
+        raise ValueError(f'Unknown export formats: {", ".join(unknown) or "none given"}')
+    targets = [output.with_name(f'{output.stem}-{name}.mp4') for name in formats]
+    taken = [t for t in targets if t.exists() or t.with_suffix('.timeline.json').exists()]
+    if taken:
+        raise FileExistsError(f'Refusing to replace existing output: {taken[0]}')
+    reports = []
+    for n, (name, target) in enumerate(zip(formats, targets)):
+        settings = preset(name, duration=timeline.settings['duration'], fps=timeline.settings['fps'],
+                          minimum_clip=timeline.settings['minimum_clip'], maximum_clip=timeline.settings['maximum_clip'])
+        portrait = settings.width/settings.height < .9
+        version = retarget(timeline, settings, reframe='follow' if portrait else 'fit')
+        with jobs.span(n/len(formats), (n+1)/len(formats)):
+            report = render(version, target)
+        version.save(target.with_suffix('.timeline.json'))
+        reports.append(dict(format=name, path=str(target), width=report['width'], height=report['height'],
+                            duration=report['duration'], full_decode=report['full_decode']))
+    return reports

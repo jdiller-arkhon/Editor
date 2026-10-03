@@ -89,3 +89,44 @@ def _kill_tree(process):
         pass
     if process.poll() is None:
         process.kill()
+
+
+def workers():
+    """Concurrent FFmpeg jobs: half the cores (each job uses ~2 threads), DRIFT_WORKERS overrides."""
+    try:
+        override = int(os.environ.get('DRIFT_WORKERS', '0'))
+    except ValueError:
+        override = 0
+    return max(1, override or min(6, (os.cpu_count() or 2)//2))
+
+
+def parallel(function, items, message=None, count=None):
+    """[function(item) for item in items], run concurrently with this job's cancel/progress context.
+
+    Results keep the input order. Progress (when ``message`` is given) is reported as jobs finish.
+    The first failure cancels jobs that have not started and is re-raised.
+    """
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    items = list(items)
+    count = count or workers()
+    if count <= 1 or len(items) <= 1:
+        results = []
+        for n, item in enumerate(items):
+            if message:
+                report(n/max(1, len(items)), message.format(done=n, total=len(items)))
+            results.append(function(item))
+        return results
+    with ThreadPoolExecutor(count) as pool:
+        futures = {pool.submit(contextvars.copy_context().run, function, item): n for n, item in enumerate(items)}
+        results = [None]*len(items)
+        try:
+            for done, future in enumerate(as_completed(futures), 1):
+                results[futures[future]] = future.result()
+                if message:
+                    report(done/len(items), message.format(done=done, total=len(items)))
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            raise
+    return results

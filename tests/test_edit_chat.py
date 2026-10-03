@@ -71,6 +71,32 @@ class EditChatTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'without a message'):
             chat.ask('hello', STATE)
 
+    def test_the_director_can_look_at_the_edit_when_asked(self):
+        import base64, subprocess, tempfile
+        from pathlib import Path
+        from montage_editor.config import Settings
+        from montage_editor.edit_chat import contact_sheet, wants_a_look
+        from montage_editor.pipeline import Clip, Timeline
+        self.assertTrue(wants_a_look('How is it? Which shot is weakest?'))
+        self.assertTrue(wants_a_look('take a look and tell me what to improve'))
+        self.assertFalse(wants_a_look('Use a punchy colour look and make it 45 seconds'))
+        with tempfile.TemporaryDirectory() as d:
+            video = Path(d)/'v.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30', '-t', '6',
+                            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(video)], check=True)
+            timeline = Timeline(1, 'song.wav', Settings().__dict__, [Clip(str(video), 0, 2, .5), Clip(str(video), 3, 2, .5)])
+            sheet = contact_sheet(timeline)
+        self.assertEqual(sheet[:2], b'\xff\xd8')
+        ollama = FakeOllama()
+        self.addCleanup(ollama.close)
+        ollama.reply = {'done_reason': 'stop', 'message': {'content': json.dumps(dict(
+            reply='S2 is the weaker shot; swapping it.', actions=[dict(action='swap_shot', value='2')]))}}
+        result = EditChat(LocalDirector(host=ollama.host)).ask('Which shot is weakest? Swap it.', dict(STATE, shot_count=2), sheet)
+        self.assertEqual(result['actions'], [('swap_shot', '2')])
+        sent = ollama.chats[0]['messages'][1]
+        self.assertEqual(base64.b64decode(sent['images'][0]), sheet)
+        self.assertIn('contact sheet of the current edit', sent['content'])
+
 
 if __name__ == '__main__':
     unittest.main()

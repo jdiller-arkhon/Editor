@@ -168,9 +168,20 @@ class EditChat:
                 + (f'Conversation so far:\n{turns}\n' if turns else '')
                 + f'Person: {message[:2000]}')
 
-    def ask(self, message, state):
-        """Returns dict(reply, actions=[(action, value)], rejected=[...], model)."""
-        content = [{'type': 'text', 'text': self.prompt(message, state)}]
+    def ask(self, message, state, sheet=None):
+        """Returns dict(reply, actions=[(action, value)], rejected=[...], model).
+
+        ``sheet``: optional JPEG contact sheet of the current edit (shots labelled S1..Sn), so the
+        director can judge the actual footage when asked for feedback.
+        """
+        text = self.prompt(message, state)
+        if sheet:
+            text += ('\nThe image is a contact sheet of the current edit: one key frame per shot, labelled '
+                     'S1..Sn in order. Base any judgement of shots on it.')
+        content = [{'type': 'text', 'text': text}]
+        if sheet:
+            from .vision_director import image_block
+            content.append(image_block(sheet))
         answer, response = self.director._call(self.director._request(CHAT_SYSTEM, CHAT_SCHEMA, content), 'chat reply')
         if not isinstance(answer, dict) or not isinstance(answer.get('reply'), str):
             raise ValueError('The director replied without a message')
@@ -179,3 +190,23 @@ class EditChat:
         self.history += [('user', message[:2000]), ('assistant', reply)]
         return dict(reply=reply, actions=accepted, rejected=rejected,
                     model=getattr(response, 'model', getattr(self.director, 'model', None)))
+
+
+LOOK = re.compile(r'look at|take a look|have a look|watch|see |review|feedback|critique|opinion|rate|rating|how (is|does|good)|improve|better|'
+                  r'weak|boring|strong|best|worst|shot \d|which shot|what do you think', re.I)
+
+
+def wants_a_look(message):
+    """Whether the person is asking the director to judge the current edit."""
+    return LOOK.search(message or '') is not None
+
+
+def contact_sheet(timeline, limit=24):
+    """JPEG with one labelled key frame per shot (S1..Sn) of ``timeline``."""
+    from .editing import source_offset
+    from .vision_director import labelled_frame, tile
+    frames = []
+    for i, clip in enumerate(timeline.clips[:limit]):
+        at = clip.anchor_output if clip.anchor_output is not None else clip.duration/2
+        frames.append(labelled_frame(clip.source, clip.start+source_offset(at, clip.duration, clip.speed_profile), f'S{i+1}'))
+    return tile(frames, 6)

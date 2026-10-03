@@ -62,6 +62,8 @@ def main():
     replay = commands.add_parser('render', help='Render a saved timeline')
     replay.add_argument('timeline')
     replay.add_argument('--output', required=True)
+    replay.add_argument('--formats', help='Comma-separated export presets to deliver the same edit for, e.g. '
+                        'youtube-1080p30,shorts-1080x1920,instagram-1080x1350 (files get -<preset> suffixes)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
     try:
@@ -90,7 +92,12 @@ def main():
                 Path(args.report).write_text(json.dumps(results, indent=2), encoding='utf-8')
             result = compare(results)
         elif args.command == 'render':
-            result = render(Timeline.load(args.timeline), args.output)
+            if args.formats:
+                from .pipeline import render_formats
+                result = render_formats(Timeline.load(args.timeline), args.output,
+                                        [f.strip() for f in args.formats.split(',') if f.strip()])
+            else:
+                result = render(Timeline.load(args.timeline), args.output)
         else:
             from .config import with_pace
             from .music_library import default_library, interpret_song

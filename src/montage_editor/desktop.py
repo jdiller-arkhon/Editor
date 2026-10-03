@@ -505,6 +505,10 @@ class Studio(QMainWindow):
         self.replay_button.setToolTip('Uses stored timeline settings and dialogue; inspector changes apply to new generation.')
         self.replay_button.setEnabled(False); self.replay_button.clicked.connect(lambda:self.export(replay=True))
         right.addWidget(self.replay_button)
+        self.formats_button = QPushButton('Export every format • YouTube, Shorts, Instagram')
+        self.formats_button.setToolTip('Deliver the loaded edit as 16:9, 9:16 and 4:5 with action-following crops')
+        self.formats_button.setEnabled(False); self.formats_button.clicked.connect(self.export_formats)
+        right.addWidget(self.formats_button)
         self.open_button = QPushButton('Open export folder')
         self.open_button.setEnabled(False); self.open_button.clicked.connect(self.open_export)
         right.addWidget(self.open_button)
@@ -802,6 +806,7 @@ class Studio(QMainWindow):
         self.timeline_table.show();self.timeline_table.setMaximumHeight(120)
         self.workspace.setMaximumHeight(720)
         self.timeline=timeline; self.lanes.set_timeline(timeline); self.replay_button.setEnabled(True)
+        self.formats_button.setEnabled(True)
         for button in self.edit_buttons:button.setEnabled(True)
         self.timeline_table.setRowCount(len(timeline.clips))
         for row,clip in enumerate(timeline.clips):
@@ -863,6 +868,7 @@ class Studio(QMainWindow):
                 if automatic:
                     story.update(faith_message=self.closing_line.text().strip(),edit_profile='cinematic',
                                  gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,impacts=True,
+                                 beat_fx=True,target_lufs=-14.0,
                                  auto_music_section=self.auto_music_section.isChecked())
                 if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
@@ -968,12 +974,16 @@ class Studio(QMainWindow):
         self.chat_input.clear();self.chat_bubble('You',message,'user')
         self.chat_send.setEnabled(False);self.chat_send.setText('Thinking…')
 
+        from .edit_chat import contact_sheet, wants_a_look
+        timeline=self.timeline if wants_a_look(message) else None
+        if timeline is not None:self.chat_bubble('Director','Watching your edit…','note')
+
         def turn():
             if key[0]=='local':
                 from .local_ai import readiness
                 ready,note=readiness(key[1])
                 if not ready:raise ValueError(note)
-            return session.ask(message,state)
+            return session.ask(message,state,contact_sheet(timeline) if timeline is not None else None)
         self.chat_job=ChatJob(turn)
         self.chat_job.done.connect(self.chat_replied)
         self.chat_job.failed.connect(lambda m:self.chat_bubble('Director',m,'warn'))
@@ -1054,6 +1064,29 @@ class Studio(QMainWindow):
             return True,{'preview':'Making a quick preview','montage':'Creating the montage','final':'Rendering the final from the preview'}[value]
         return False,f'Unknown action {action}'
 
+    def export_formats(self):
+        """Render the loaded edit for every platform format in the background."""
+        if self.job is not None or self.timeline is None:return
+        from .pipeline import render_formats
+        movies=QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or str(Path.home()/'Videos')
+        base=Path(movies)/'DRIFT'/(datetime.now().strftime('montage-%Y%m%d-%H%M%S-')+uuid4().hex[:6]+'.mp4')
+        timeline=self.timeline
+        self.create_button.setEnabled(False);self.formats_button.setEnabled(False)
+        self.progress.setRange(0,1000);self.progress.setValue(0)
+        self.job=RenderJob(lambda:render_formats(timeline,base))
+        self.job.done.connect(self.formats_done)
+        self.job.failed.connect(self.failed)
+        self.job.finished.connect(self.finished)
+        self.job.progress.connect(self.on_progress)
+        self.cancel_button.setEnabled(True)
+        self.job.start()
+
+    def formats_done(self,reports):
+        self.last_output=reports[-1]['path'];self.open_button.setEnabled(True)
+        self.status.setText('Delivered '+' • '.join(f"{r['format']} {r['width']}×{r['height']}" for r in reports)+
+                            ' • all fully decoded')
+        self.preview_file(reports[0]['path'])
+
     def finalize_preview(self):
         if self.preview_timeline is None:return
         try:
@@ -1113,6 +1146,7 @@ class Studio(QMainWindow):
         self.progress.setRange(0,1); self.progress.setValue(1)
         self.create_button.setEnabled(True);self.create_button.setText('Create montage')
         self.export_button.setEnabled(True); self.replay_button.setEnabled(self.timeline is not None)
+        self.formats_button.setEnabled(self.timeline is not None)
         self.cancel_button.setEnabled(False)
         self.job.deleteLater(); self.job=None
 

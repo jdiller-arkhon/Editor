@@ -29,7 +29,7 @@ MODELS = {'claude-fable-5-1': 'Claude Fable 5.1 • most capable', 'claude-opus-
 TREATMENTS = ('straight', 'ramp', 'punch')
 TRANSITIONS_OUT = ('cut', 'push_left', 'push_right', 'zoom', 'blur', 'dissolve')
 FALLBACK_BETA = 'server-side-fallback-2026-07-01'
-EVENTS = ('elimination', 'multi_elimination', 'clutch', 'objective', 'outplay', 'movement',
+EVENTS = ('elimination', 'multi_elimination', 'clutch', 'objective', 'outplay', 'fight', 'movement',
           'cinematic', 'setup', 'death', 'menu_or_loading', 'other')
 STRIP_FRAMES, STRIP_STEP = 6, .5
 TILE = (256, 144)
@@ -596,30 +596,89 @@ def _local_schema(schema):
     return local
 
 
+CHECK_SYSTEM = (
+    'You check gameplay clips for a montage editor. Each image is one clip: six numbered frames, 0.5 s '
+    'apart (left to right, top to bottom). Look at every frame. For each clip answer the checklist '
+    'from what is visible only: observations (one short sentence), overlay_frames (numbers of the '
+    'frames where a scoreboard, stats table, menu, death or respawn screen, loading screen or a large '
+    'text panel covers the game; [] if none), enemy_visible (another player or opponent appears), '
+    'firing (muzzle flashes, projectiles, beams, explosions or impacts), kill (an opponent clearly '
+    'dies: gibs, ragdoll, burst, or a kill message), peak_frame (the frame with the most action), '
+    'highlight (0-10: how much a viewer would want to see this; ordinary walking is 1-3). If unsure, '
+    'answer false. Never invent clip numbers.'
+)
+CHECK_ITEM = {
+    'type': 'object',
+    'properties': {
+        'id': {'type': 'integer'}, 'observations': {'type': 'string'},
+        'overlay_frames': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1, 'maximum': STRIP_FRAMES}},
+        'enemy_visible': {'type': 'boolean'}, 'firing': {'type': 'boolean'}, 'kill': {'type': 'boolean'},
+        'peak_frame': {'type': 'integer', 'minimum': 1, 'maximum': STRIP_FRAMES},
+        'highlight': {'type': 'integer', 'minimum': 0, 'maximum': 10},
+    },
+    'required': ['id', 'observations', 'overlay_frames', 'enemy_visible', 'firing', 'kill', 'peak_frame', 'highlight'],
+    'additionalProperties': False,
+}
+
+
+def checklist_moment(answer):
+    """Turn one checklist answer into a standard review judgement (validated by validate_review).
+
+    Unusable when two or more frames are covered by an overlay; the highlight is half the model's
+    own score and half a fixed evidence score (2 base, +2 enemy, +2 firing, +4 kill), because small
+    models judge single facts more reliably than overall quality.
+    """
+    if not isinstance(answer, dict):
+        return answer
+    try:
+        overlay = {f for f in answer['overlay_frames'] if isinstance(f, int) and 1 <= f <= STRIP_FRAMES}
+        enemy, firing, kill = (answer[k] is True for k in ('enemy_visible', 'firing', 'kill'))
+        own, peak = answer['highlight'], answer['peak_frame']
+        if not (isinstance(own, int) and isinstance(peak, int)) or isinstance(own, bool) or isinstance(peak, bool):
+            raise TypeError
+    except (KeyError, TypeError):
+        return dict(id=answer.get('id'))           # rejected by validate_review
+    usable = len(overlay) < 2
+    evidence = 2+2*enemy+2*firing+4*kill
+    if usable and peak in overlay:
+        peak = min((f for f in range(1, STRIP_FRAMES+1) if f not in overlay), key=lambda f: abs(f-peak))
+    event = ('menu_or_loading' if not usable else 'elimination' if kill else
+             'fight' if enemy and firing else 'movement')
+    highlight = 0 if not usable else int(round(.5*max(0, min(10, own))+.5*evidence))
+    return dict(id=answer['id'], highlight=highlight, event=event, usable=usable, peak_frame=peak,
+                note=str(answer.get('observations', ''))[:200],
+                checklist=dict(overlay_frames=sorted(overlay), enemy_visible=enemy, firing=firing, kill=kill))
+
+
 class LocalDirector(ClaudeDirector):
     """Vision director backed by a local Ollama model (loopback only, no proxy, no redirects)."""
     label = 'Local AI'
 
     def __init__(self, model=LOCAL_MODEL, host=LOCAL_HOST, timeout=900, batch=4, num_ctx=8192, weight=LOCAL_WEIGHT,
-                 limit=16, **options):
+                 limit=16, think=False, **options):
         from urllib.parse import urlparse
         parsed = urlparse(host)
         if parsed.scheme != 'http' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1'):
             raise ValueError('The local AI director only talks to Ollama on this computer')
         super().__init__(model=model, client=None, director_model=model, limit=limit, **options)
         self.host, self.timeout, self.batch, self.num_ctx = host.rstrip('/'), timeout, batch, num_ctx
-        self.weight = weight
+        self.weight, self.think = weight, think
         self.strict = True    # small local models get the playbook enforced, not just requested
 
     def request(self, pool, brief):
-        """As for Claude, but the schema pins one judgement per strip (small models otherwise skip them)."""
-        request = super().request(pool, brief)
-        moments = request['schema']['properties']['moments']
-        moments.update(minItems=len(pool), maxItems=len(pool))
-        moments['items']['properties']['id'] = {'type': 'integer', 'enum': list(range(len(pool)))}
-        moments['items']['properties']['highlight'].update(minimum=0, maximum=10)
-        moments['items']['properties']['peak_frame'].update(minimum=1, maximum=STRIP_FRAMES)
-        return request
+        """Checklist review: one answer per strip is pinned by the schema (small models otherwise skip some)."""
+        content = [{'type': 'text', 'text': f'Creative brief: {brief[:500] or "none"}\n'
+                    f'{len(pool)} clips follow, in order, ids 0-{len(pool)-1}.'}]
+        for ident, candidate in enumerate(pool):
+            content.append({'type': 'text', 'text': f'Clip {ident}:'})
+            content.append(image_block(strip(candidate)))
+        item = json.loads(json.dumps(CHECK_ITEM))
+        item['properties']['id'] = {'type': 'integer', 'enum': list(range(len(pool)))}
+        schema = {'type': 'object', 'properties': {'moments': {'type': 'array', 'items': item,
+                  'minItems': len(pool), 'maxItems': len(pool)}}, 'required': ['moments'], 'additionalProperties': False}
+        texts = [b['text'] for b in content if b['type'] == 'text']
+        images = [b['source']['data'] for b in content if b['type'] == 'image']
+        return dict(model=self.model, system=CHECK_SYSTEM, schema=schema, text='\n'.join(texts), images=images)
 
     def _request(self, system, schema, content):
         texts = [b['text'] for b in content if b['type'] == 'text']
@@ -630,7 +689,7 @@ class LocalDirector(ClaudeDirector):
         from urllib.error import URLError
         from urllib.request import ProxyHandler, Request, build_opener
         from .ai_director import NoRedirect
-        payload = {'model': request['model'], 'stream': False, 'format': request['schema'],
+        payload = {'model': request['model'], 'stream': False, 'format': request['schema'], 'think': self.think,
                    'options': {'temperature': .1, 'num_ctx': self.num_ctx},
                    'messages': [{'role': 'system', 'content': request['system']},
                                 {'role': 'user', 'content': request['text'], 'images': request['images']}]}
@@ -675,6 +734,8 @@ class LocalDirector(ClaudeDirector):
             for attempt in (1, 2):   # small local models occasionally return an incomplete answer
                 review, response = self._call(self.request(chunk, brief), 'moment review')
                 seconds += response.seconds
+                if isinstance(review, dict) and isinstance(review.get('moments'), list):
+                    review = dict(review, moments=[checklist_moment(m) for m in review['moments']])
                 try:
                     local, _, _ = validate_review(review, len(chunk))
                     break
