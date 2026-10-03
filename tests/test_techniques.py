@@ -153,12 +153,13 @@ class TechniqueTests(unittest.TestCase):
     def test_film_look_adds_moving_grain(self):
         settings = Settings(width=320, height=180, fps=30, quality='master')
         base = Timeline(1, str(self.music), settings.__dict__, [Clip(str(self.root/'still.mp4'), 0, 1, 1)])
-        render(base, self.root/'flat.mp4'); render(replace(base, look='film'), self.root/'film.mp4')
+        # Film is the cinematic grade plus grain, so comparing the two isolates the grain.
+        render(replace(base, look='cinematic'), self.root/'flat.mp4'); render(replace(base, look='film'), self.root/'film.mp4')
         flat, film = frames(self.root/'flat.mp4', 320, 180), frames(self.root/'film.mp4', 320, 180)
         flicker = lambda v: np.abs(np.diff(v[5:25], axis=0)).mean()
         self.assertLess(flicker(flat), .3)                    # a still grey card stays still
         self.assertGreater(flicker(film), max(.4, 4*flicker(flat)))   # grain changes every frame
-        self.assertLess(abs(film.mean()-flat.mean()), 8)      # without shifting exposure much
+        self.assertLess(abs(film.mean()-flat.mean()), 3)      # and barely shifts exposure (~2 of 255 levels)
 
 
 if __name__ == '__main__':
