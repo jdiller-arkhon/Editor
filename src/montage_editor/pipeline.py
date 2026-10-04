@@ -1101,3 +1101,52 @@ def render_formats(timeline, output, formats=FORMATS):
         reports.append(dict(format=name, path=str(target), width=report['width'], height=report['height'],
                             duration=report['duration'], full_decode=report['full_decode']))
     return reports
+
+
+TREATMENT_NAMES = {'slow motion': 'ramp', 'punch': 'punch', 'straight': 'straight'}
+
+
+def edit_shot(timeline, index, treatment=None, transition=None, beats=()):
+    """Change one shot's treatment ('slow motion'/'punch'/'straight') and/or the transition out of it.
+
+    Timing never changes; the footage stays centred on the same moment, and the same checks as a
+    director plan apply (source bounds, no footage reuse). Raises ValueError when it cannot apply.
+    """
+    if not 0 <= index < len(timeline.clips):
+        raise ValueError('No such shot')
+    clips = list(timeline.clips)
+    clip = clips[index]
+    if treatment is not None:
+        kind = TREATMENT_NAMES.get(treatment)
+        if kind is None:
+            raise ValueError(f'Unknown treatment {treatment}')
+        if kind == 'ramp' and clip.duration < 1:
+            raise ValueError('Slow motion needs a shot of at least 1 second')
+        moment = dict(source=clip.source, time=shot_moment(clip), score=clip.score,
+                      source_duration=probe(clip.source)['duration'])
+        start = sum(c.duration for c in clips[:index])
+        accents = []
+        if kind == 'punch':
+            accents = [round(float(b)-start, 4) for b in beats if start+.2 < b < start+clip.duration-.2][:4]
+            if not accents:
+                raise ValueError('Punch-ins need beats inside the shot')
+        shell = replace(clip, speed_profile='ramp' if kind == 'ramp' else 'normal',
+                        anchor_output=clip.duration/2 if kind == 'ramp' else clip.anchor_output, accents=accents)
+        placed, reason = _place(shell, moment)
+        reason = reason or _conflict(clips, index, placed, [])
+        if reason:
+            raise ValueError(f'Cannot change shot {index+1}: {reason}')
+        clips[index] = placed
+    transitions = list(timeline.boundary_transitions)
+    if transition is not None:
+        if index >= len(clips)-1:
+            raise ValueError('The last shot has no transition out')
+        if transition not in PLAN_TRANSITIONS:
+            raise ValueError(f'Unknown transition {transition}')
+        if timeline.transition not in BLENDS:
+            raise ValueError('This edit uses plain cuts; choose a blend transition style to mix cuts')
+        transitions = transitions or ['cut']*(len(clips)-1)
+        transitions[index] = PLAN_TRANSITIONS[transition]
+    result = replace(timeline, clips=clips, boundary_transitions=transitions)
+    result.validate()
+    return result

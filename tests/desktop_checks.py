@@ -172,7 +172,16 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(restored.ai_model.text(),'local-model')
             self.assertEqual(restored.director_mode.currentIndex(),1)
             self.assertEqual(restored.music_folder,d)
-            self.assertTrue(restored.inspector_scroll.isHidden())
+            # The side panel opens on the director chat; the manual form is collapsed until asked for.
+            self.assertFalse(restored.inspector_scroll.isHidden())
+            self.assertTrue(restored.manual_controls.isHidden())
+            restored.toggle_advanced()
+            self.assertFalse(restored.manual_controls.isHidden())
+            self.assertEqual(restored.manual_toggle.text(),'Manual controls ▾')
+            restored.toggle_advanced()
+            self.assertTrue(restored.manual_controls.isHidden())
+            restored.show_advanced(restored.look)                       # Effects/AI Director nav opens the form
+            self.assertFalse(restored.manual_controls.isHidden())
             restored.close()
 
     def test_quick_create_connects_quality_and_cinematic_engine(self):
@@ -291,6 +300,59 @@ class DesktopTests(unittest.TestCase):
                 window.chat_job.wait(10000);self.app.processEvents();self.app.processEvents()
             self.assertIn('Ollama is not running',window.chat_log.toPlainText())
             self.assertEqual(window.pace.currentData(),'fast')
+            window.close()
+
+    def test_chat_styles_and_shot_edits_drive_the_app(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'talents.ini'),QSettings.IniFormat))
+            window.apply_chat_actions([('apply_style','chill')])
+            self.assertEqual((window.pace.currentData(),window.look.currentData(),window.sfx.isChecked(),window.beat_fx.isChecked()),
+                             ('calm','clean',False,False))
+            window.apply_chat_actions([('apply_style','hype')])
+            self.assertEqual((window.pace.currentData(),window.look.currentData(),window.beat_fx.isChecked()),('fast','punchy',True))
+            self.assertIn('Style → hype',window.chat_log.toPlainText())
+            video=Path(d)/'v.mp4'
+            subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','testsrc2=size=160x90:rate=30','-t','20',
+                            '-c:v','libx264','-pix_fmt','yuv420p',str(video)],check=True)
+            window.show_timeline(Timeline(1,'song.wav',Settings().__dict__,
+                                          [Clip(str(video),1,2,.5),Clip(str(video),6,2,.9),Clip(str(video),11,2,.4)],
+                                          transition='cinematic',boundary_transitions=['cut','cut']))
+            window.music_facts=dict(beats=[2.5,3.0,3.5],phrases=[dict(time=2.0,kinds=['drop'])])
+            window.apply_chat_actions([('set_shot','2 slow motion'),('set_cut','1 dissolve')])
+            self.assertEqual(window.timeline.clips[1].speed_profile,'ramp')
+            self.assertEqual(window.timeline.boundary_transitions,['fade','cut'])
+            facts=window.chat_state()['shots']
+            self.assertEqual((facts[1]['treatment'],facts[1]['music'],facts[0]['transition_out']),('slow motion',['drop'],'dissolve'))
+            window.apply_chat_actions([('set_shot','3 slow motion'),('set_cut','3 dissolve')])
+            log=window.chat_log.toPlainText()
+            self.assertIn('last shot has no transition',log)          # explained, nothing changed
+            with patch.object(window,'export') as export,patch.object(window,'export_formats') as formats:
+                window.apply_chat_actions([('make','render')]);window.apply_chat_actions([('make','formats')])
+                export.assert_called_once_with(replay=True);formats.assert_called_once()
+            window.close()
+
+    def test_loading_a_montage_never_cuts_off_the_timeline_or_chat(self):
+        # Real order: the window is open, then a finished montage loads. The page once stopped
+        # growing at 720 px here, hiding the timeline and the director chat.
+        with tempfile.TemporaryDirectory() as d:
+            window=Studio(QSettings(str(Path(d)/'page.ini'),QSettings.IniFormat))
+            window.resize(1520,1000);window.show();self.app.processEvents()
+            window.show_timeline(Timeline(1,'song.wav',Settings().__dict__,[Clip('v.mp4',1,2,.5),Clip('v.mp4',5,2,.5)]))
+            self.app.processEvents()
+            page=window.body_scroll.widget()
+            for panel in (window.lanes,window.timeline_table):
+                self.assertTrue(panel.isVisible())
+                self.assertLessEqual(panel.mapTo(page,panel.rect().bottomLeft()).y(),page.height())
+            # The chat lives in the side panel and fits it: nothing wider than the window.
+            self.assertTrue(window.chat_panel.isVisible())
+            self.assertLessEqual(page.width(),window.body_scroll.viewport().width())
+            side=window.inspector_scroll
+            self.assertLessEqual(window.chat_panel.mapTo(side.widget(),window.chat_panel.rect().topRight()).x(),
+                                 side.viewport().width())
+            window.resize(1200,820);self.app.processEvents()               # also at the minimum window size
+            self.assertLessEqual(page.width(),window.body_scroll.viewport().width())
+            self.assertLessEqual(side.widget().width(),side.viewport().width())
             window.close()
 
     def test_any_song_can_be_pasted_into_one_box(self):

@@ -97,6 +97,73 @@ class EditChatTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(sent['images'][0]), sheet)
         self.assertIn('contact sheet of the current edit', sent['content'])
 
+    def test_new_talents_styles_shot_treatments_cuts_and_renders(self):
+        accepted, rejected = validate_actions([
+            dict(action='apply_style', value='Hype'), dict(action='set_shot', value='shot 4 slow-mo'),
+            dict(action='set_cut', value='3 push left'), dict(action='set_beat_fx', value='off'),
+            dict(action='make', value='formats'), dict(action='set_cut', value='8 dissolve')],
+            STATE, 'make it hype, slow-mo on shot 4, push out of shot 3, no beat flashes, export every platform')
+        self.assertEqual(accepted, [('apply_style', 'hype'), ('set_shot', '4 slow motion'), ('set_cut', '3 push_left'),
+                                    ('set_beat_fx', 'off'), ('make', 'formats')])
+        self.assertEqual(validate_actions([dict(action='set_cut', value='5 dissolve')], STATE, 'dissolve after 5')[1][0][2],
+                         'no transition out of that shot')          # STATE has 5 shots: the last has no "out"
+        self.assertEqual(validate_actions([dict(action='apply_style', value='vaporwave')], STATE, 'style')[1][0][2],
+                         'unknown style')
+        self.assertEqual(validate_actions([dict(action='make', value='render')], dict(STATE, shot_count=0), 'render')[1][0][2],
+                         'create a montage first')
+        from montage_editor.edit_chat import CHAT_SYSTEM, STYLES
+        self.assertIn('apply_style hype', CHAT_SYSTEM)                  # worked examples for small models
+        self.assertTrue(all(set(v) <= set(ACTIONS) for v in STYLES.values()))
+
+    def test_one_shot_can_be_retreated_or_given_a_new_transition(self):
+        import subprocess, tempfile
+        from pathlib import Path
+        from montage_editor.config import Settings
+        from montage_editor.pipeline import Clip, Timeline, edit_shot
+        with tempfile.TemporaryDirectory() as d:
+            video = Path(d)/'v.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=30', '-t', '20',
+                            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(video)], check=True)
+            clips = [Clip(str(video), 1, 2, .5), Clip(str(video), 6, 2, .9), Clip(str(video), 11, .6, .4)]
+            timeline = Timeline(1, 'song.wav', Settings().__dict__, clips, transition='cinematic',
+                                boundary_transitions=['cut', 'cut'])
+            moment = clips[1].start+1
+            slow = edit_shot(timeline, 1, treatment='slow motion')
+            self.assertEqual(slow.clips[1].speed_profile, 'ramp')
+            self.assertEqual((slow.clips[1].duration, slow.clips[0], slow.clips[2]), (2, clips[0], clips[2]))   # timing kept
+            self.assertAlmostEqual(slow.clips[1].anchor_source, moment, places=2)                  # same moment, now slowed
+            punched = edit_shot(slow, 1, treatment='punch', beats=[2.5, 3.0, 3.5, 9.0])
+            self.assertEqual((punched.clips[1].speed_profile, punched.clips[1].accents), ('normal', [0.5, 1.0, 1.5]))
+            self.assertEqual(edit_shot(punched, 1, treatment='straight').clips[1].accents, [])
+            faded = edit_shot(timeline, 0, transition='dissolve')
+            self.assertEqual(faded.boundary_transitions, ['fade', 'cut'])
+            for bad in (dict(index=2, treatment='slow motion'),            # 0.6 s is too short to slow down
+                        dict(index=2, transition='dissolve'),              # last shot has no transition out
+                        dict(index=1, treatment='punch', beats=[]),        # no beats to punch on
+                        dict(index=9, treatment='straight')):
+                with self.assertRaises(ValueError):
+                    edit_shot(timeline, **bad)
+            with self.assertRaisesRegex(ValueError, 'plain cuts'):
+                edit_shot(Timeline(1, 'song.wav', Settings().__dict__, clips), 0, transition='dissolve')
+
+    def test_the_persons_literal_words_win_over_a_paraphrase(self):
+        from montage_editor.edit_chat import ground
+        # Real qwen3.5:9b mistakes from the scripted evaluation.
+        accepted, rejected, notes = ground([], [('set_length', ']}', 'length must be 5-600 seconds')],
+                                           'can you make it 45 seconds long', STATE)
+        self.assertEqual((accepted, rejected), ([('set_length', '45')], []))
+        self.assertEqual(ground([], [], 'use this song https://youtu.be/abc123', STATE)[0],
+                         [('set_music', 'https://youtu.be/abc123')])
+        self.assertEqual(ground([('set_pace', 'calm'), ('set_look', 'cinematic'), ('make', 'preview')], [],
+                                'make it calmer and give it a film look, then preview it', STATE)[0],
+                         [('set_pace', 'calm'), ('set_look', 'film'), ('make', 'preview')])
+        # No overreach: a link that is not about music, or a look the model did not touch, is left alone.
+        self.assertEqual(ground([('set_look', 'punchy')], [], 'saw the youtu.be/x clip? make it punchy', STATE)[0],
+                         [('set_look', 'punchy')])
+        self.assertEqual(ground([('set_pace', 'fast')], [], 'faster, but keep the film look', STATE)[0],
+                         [('set_pace', 'fast')])
+        self.assertEqual(ground([('make', 'preview')], [], 'show me', STATE), ([('make', 'preview')], [], []))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -12,9 +12,20 @@ from .config import PACES, PRESETS
 from .craft import LOOKS
 
 SLOW_MOTION = ('motion', 'blend', 'none')
-MAKE = ('preview', 'montage', 'final')
+MAKE = ('preview', 'montage', 'final', 'render', 'formats')
 SWITCH = ('on', 'off')
+TREATMENTS = ('slow motion', 'punch', 'straight')
+CUTS = ('cut', 'push_left', 'push_right', 'zoom', 'blur', 'dissolve')
 MAX_TURNS = 8
+# Named directing styles: each is a bundle of the settings below, applied through the same controls.
+STYLES = {
+    'hype': dict(set_pace='fast', set_look='punchy', set_slow_motion='motion', set_swishes='on', set_beat_fx='on',
+                 set_motion_blur='on'),
+    'cinematic': dict(set_pace='balanced', set_look='film', set_slow_motion='motion', set_swishes='on',
+                      set_beat_fx='off', set_motion_blur='on'),
+    'chill': dict(set_pace='calm', set_look='clean', set_slow_motion='motion', set_swishes='off', set_beat_fx='off'),
+    'raw': dict(set_pace='fast', set_look='none', set_swishes='off', set_beat_fx='off', set_motion_blur='off'),
+}
 
 ACTIONS = {
     'set_pace': 'one of ' + '/'.join(PACES),
@@ -30,7 +41,13 @@ ACTIONS = {
     'set_motion_blur': 'motion blur on speed ramps: on/off',
     'move_shot': 'shot number and direction, e.g. "3 earlier" or "5 later"',
     'swap_shot': 'shot number to replace with the strongest unused moment, e.g. "4"',
-    'make': 'preview (fast draft) / montage (full render) / final (render the previewed edit)',
+    'set_beat_fx': 'flash, colour split and shake on drops and loud downbeats: on/off',
+    'apply_style': 'a whole directing style: ' + '/'.join(STYLES) + ' (hype = fast, punchy, beat FX; '
+                   'cinematic = film grade, smooth slow motion; chill = calm and clean; raw = fast, no effects)',
+    'set_shot': 'shot number and treatment, e.g. "4 slow motion", "2 punch" (beat punch-ins) or "6 straight"',
+    'set_cut': 'shot number and the transition out of it, e.g. "5 dissolve"; one of ' + '/'.join(CUTS),
+    'make': 'preview (fast draft) / montage (full new render) / final (render the previewed edit) / '
+            'render (render the current edited timeline) / formats (deliver the edit for every platform)',
 }
 
 CHAT_SCHEMA = {
@@ -56,7 +73,17 @@ CHAT_SYSTEM = (
     'described form. Make no action unless the person asked for a change or clearly agreed to one; '
     'when they ask for a new version, change settings first and finish with a make action. Never claim '
     'you watched footage, heard music or rendered anything yourself: the engine measures and renders. '
-    'Do not change the story tone or closing line unless asked. Keep replies under 80 words.'
+    'Do not change the story tone or closing line unless asked. Keep replies under 80 words.\n'
+    'Examples (person -> actions):\n'
+    '"make it faster" -> set_pace fast\n'
+    '"black and white, then show me" -> set_look mono; make preview\n'
+    '"make it hype" -> apply_style hype\n'
+    '"shot 3 is boring" -> swap_shot 3\n'
+    '"slow-mo on shot 4" -> set_shot "4 slow motion"\n'
+    '"dissolve out of shot 5" -> set_cut "5 dissolve"\n'
+    '"I made changes, render it" -> make render\n'
+    '"export for every platform" -> make formats\n'
+    '"why open with that shot?" -> no actions; explain using state.shots'
 )
 
 
@@ -77,7 +104,11 @@ TOPICS = {
     'set_motion_blur': r'blur',
     'move_shot': r'shot|clip|move|earlier|later|order|swap|switch',
     'swap_shot': r'shot|clip|swap|replace|change|different|boring|weak|better',
-    'make': r'preview|render|make|create|show|export|version|try|again|go|generate|draft|final|see|build|redo',
+    'make': r'preview|render|make|create|show|export|version|try|again|go|generate|draft|final|see|build|redo|platform|format|everywhere',
+    'set_beat_fx': r'beat|flash|fx|effect|split|shake|glitch|hype|intens|energ',
+    'apply_style': r'style|hype|cinematic|chill|calm|raw|energ|vibe|feel|mood|like a|kaiser|montage',
+    'set_shot': r'slow|slo-?mo|punch|zoom|straight|normal|speed|ramp|shot',
+    'set_cut': r'transition|dissolve|cut|push|zoom|blur|fade|blend|between|out of|into|after',
 }
 
 
@@ -124,7 +155,27 @@ def validate_actions(actions, state, message=None):
             reason = None if word in PRESETS else 'unknown format'; value = word
         elif action == 'set_slow_motion':
             reason = None if word in SLOW_MOTION else 'unknown slow-motion mode'; value = word
-        elif action in ('set_swishes', 'set_motion_blur'):
+        elif action == 'apply_style':
+            reason = None if word in STYLES else 'unknown style'; value = word
+        elif action == 'set_shot':
+            match = re.fullmatch(r'(?:shot\s*)?(\d+)\s+(slow[- ]?mo(?:tion)?|punch(?:-ins?)?|straight|normal)', word)
+            if not match:
+                reason = 'say e.g. "4 slow motion"'
+            elif not shots or not 1 <= int(match.group(1)) <= shots:
+                reason = 'no such shot'
+            else:
+                kind = match.group(2)
+                value = f"{match.group(1)} {'slow motion' if kind.startswith('slow') else 'punch' if kind.startswith('punch') else 'straight'}"
+        elif action == 'set_cut':
+            match = re.fullmatch(r'(?:shot\s*)?(\d+)\s+([a-z_ ]+)', word)
+            kind = match.group(2).strip().replace(' ', '_') if match else ''
+            if not match or kind not in CUTS:
+                reason = 'say e.g. "5 dissolve"'
+            elif not shots or not 1 <= int(match.group(1)) < shots:
+                reason = 'no transition out of that shot'
+            else:
+                value = f'{match.group(1)} {kind}'
+        elif action in ('set_swishes', 'set_motion_blur', 'set_beat_fx'):
             reason = None if word in SWITCH else 'use on or off'; value = word
         elif action == 'move_shot':
             match = re.fullmatch(r'(?:shot\s*)?(\d+)\s+(earlier|later)', word)
@@ -144,6 +195,8 @@ def validate_actions(actions, state, message=None):
             reason = None if word in MAKE else 'unknown render'; value = word
             if word == 'final' and not state.get('has_preview'):
                 reason = 'make a preview first'
+            if word in ('render', 'formats') and not shots:
+                reason = 'create a montage first'
         if reason is None and not requested(action, message):
             reason = 'not asked for'
         (rejected.append((action, value, reason)) if reason else accepted.append((action, value)))
@@ -151,6 +204,53 @@ def validate_actions(actions, state, message=None):
     makes = [a for a in accepted if a[0] == 'make']
     accepted = [a for a in accepted if a[0] != 'make'] + makes[-1:]
     return accepted, rejected
+
+
+URL = re.compile(r'(?:https?://|www\.|youtu\.be/|open\.spotify\.com/|spotify:)\S+', re.I)
+
+
+def ground(accepted, rejected, message, state):
+    """The person's literal words win over a small model's paraphrase.
+
+    Measured with qwen3.5:9b: "make it 45 seconds" came back as set_length "]}", a pasted song
+    link was dropped, and "film look" became "cinematic". When the message itself names a value
+    for an action the model chose (or, for links, plainly asks for one), that value is used.
+    Returns (accepted, rejected, notes).
+    """
+    text = (message or '').lower()
+    accepted, notes = list(accepted), []
+    chosen = {a for a, _ in accepted}
+
+    def named(options):
+        hits = [o for o in options if re.search(rf'\b{re.escape(o)}\b', text)]
+        return hits[0] if len(hits) == 1 else None
+
+    def put(action, value, why):
+        nonlocal accepted
+        if any(a == action and v == value for a, v in accepted):
+            return
+        accepted = [(a, v) for a, v in accepted if a != action]
+        accepted.insert(len([a for a in accepted if a[0] != 'make']), (action, value))
+        notes.append(f'{action} "{value}" taken from your words ({why})')
+    # Values the model got wrong for an action it did pick.
+    for action, value, reason in list(rejected):
+        if action == 'set_length':
+            number = re.search(r'\b(\d{1,3}(?:\.\d+)?)\s*(?:s\b|sec|second)', text)
+            if number and 5 <= float(number.group(1)) <= 600:
+                put('set_length', number.group(1), 'seconds'); rejected.remove((action, value, reason))
+    look, pace, style = named(LOOKS), named(PACES), named(STYLES)
+    if 'set_look' in chosen and look and look != 'none':
+        put('set_look', look, 'look named')
+    if 'set_pace' in chosen and pace:
+        put('set_pace', pace, 'pace named')
+    if 'apply_style' in chosen and style:
+        put('apply_style', style, 'style named')
+    link = URL.search(message or '')
+    if link and 'set_music' not in chosen and re.search(r'\b(song|music|track|soundtrack|audio|tune)\b', text):
+        put('set_music', link.group(0).rstrip('.,)'), 'link pasted')
+    elif link and 'set_music' in chosen:
+        put('set_music', link.group(0).rstrip('.,)'), 'link pasted')
+    return accepted, rejected, notes
 
 
 class EditChat:
@@ -187,8 +287,9 @@ class EditChat:
             raise ValueError('The director replied without a message')
         reply = answer['reply'].strip()[:1200] or '(no reply)'
         accepted, rejected = validate_actions(answer.get('actions', []), state, message)
+        accepted, rejected, grounded = ground(accepted, rejected, message, state)
         self.history += [('user', message[:2000]), ('assistant', reply)]
-        return dict(reply=reply, actions=accepted, rejected=rejected,
+        return dict(reply=reply, actions=accepted, rejected=rejected, grounded=grounded,
                     model=getattr(response, 'model', getattr(self.director, 'model', None)))
 
 

@@ -21,7 +21,7 @@ from .workspace_widgets import BrandMark, CinemaCanvas, TimelineLanes, Cathedral
 from .music_library import find_songs, search_libraries, interpret_song, default_library, AUDIO, VIDEO
 from .config import Settings, draft_of, preset, with_pace
 from .vision_director import LOCAL_MODEL
-from .pipeline import Timeline, create_montage, render, probe, analyze_gameplay, exchange_shots, retarget, swap_shots
+from .pipeline import PLAN_TRANSITIONS, Timeline, create_montage, render, probe, analyze_gameplay, exchange_shots, retarget, swap_shots
 
 STORY_TONES = {
     'subtle': ('Subtle • hope & perseverance', 'Keep the faith.',
@@ -136,8 +136,8 @@ DIRECTORS=[('Local AI director • on this computer (Ollama)','local'),('Activit
            ('Claude vision editor • cloud, optional','claude')]
 
 
-CHAT_SUGGESTIONS = ['Make it faster and more intense', 'Slow motion only on the biggest hits',
-                    'Use this song: <paste a link>', 'Make a 30 second Shorts version', 'Why did you open with that shot?']
+CHAT_SUGGESTIONS = ['Make it hype', 'Slow-mo on the drop', 'Use this song: <paste a link>', '30 s Shorts version',
+                    'Why did you open with that shot?']
 
 
 class ChatJob(QThread):
@@ -203,7 +203,7 @@ class Studio(QMainWindow):
         for name,callback in [('Studio',lambda:self.screen.setCurrentIndex(0)),
                               ('Import',self.import_media),('AI Director',lambda:self.show_advanced(self.director_mode)),
                               ('Timeline',lambda:self.body_scroll.ensureWidgetVisible(self.lanes)),
-                              ('AI Chat',lambda:(self.body_scroll.ensureWidgetVisible(self.chat_panel),self.chat_input.setFocus())),
+                              ('AI Chat',lambda:self.focus_chat()),
                               ('Effects',lambda:self.show_advanced(self.transition)),
                               ('Audio',self.import_music),
                               ('Export',self.export)]:
@@ -294,7 +294,7 @@ class Studio(QMainWindow):
         intake_layout.addLayout(preview_row)
         self.preview_timeline=None
         secondary=QHBoxLayout()
-        advanced=QPushButton('Creative controls');advanced.clicked.connect(self.toggle_advanced);secondary.addWidget(advanced)
+        advanced=QPushButton('Manual controls');advanced.clicked.connect(self.toggle_advanced);secondary.addWidget(advanced)
         load = QPushButton('Open timeline'); load.clicked.connect(self.load_timeline); secondary.addWidget(load)
         intake_layout.addLayout(secondary)
         intake.setMinimumWidth(380); intake.setMinimumHeight(intake.sizeHint().height())
@@ -361,31 +361,33 @@ class Studio(QMainWindow):
             button=QPushButton(text);button.clicked.connect(action);button.setEnabled(False)
             edit_row.addWidget(button);self.edit_buttons.append(button)
         edit_row.addStretch();track.addLayout(edit_row)
-        self.alternates=[]
-        track.addWidget(label('Built from the generated or loaded timeline. Manual clip editing is planned.','muted'))
+        self.alternates=[];self.music_facts={}
+        track.addWidget(label('Select a shot to move or swap it, or ask the director, e.g. “slow motion on shot 4” or “dissolve out of shot 5”.','muted'))
         column.addWidget(timeline)
 
-        chat,talk=panel()
-        chat_heading=QHBoxLayout();chat_heading.addWidget(step(4,'Director chat'),1)
+        chat=QWidget();chat.setObjectName('step');talk=QVBoxLayout(chat)
+        talk.setContentsMargins(0,0,0,0);talk.setSpacing(10)
+        chat_heading=QHBoxLayout();chat_heading.addWidget(step(4,'Director'),1)
         self.chat_chip=label('On this computer','chipTeal');chat_heading.addWidget(self.chat_chip)
         talk.addLayout(chat_heading)
-        talk.addWidget(label('Ask for changes in your own words. The director explains its choices and adjusts '
-                             'the edit for you; every change goes through the same controls you can see.','muted'))
+        intro=label('Tell the director what you want in your own words: a style, a length, a song, '
+                    'slow motion on a shot. It explains its choices and makes the changes for you.','muted')
+        intro.setWordWrap(True);talk.addWidget(intro)
         self.chat_log=QTextBrowser();self.chat_log.setObjectName('chatlog');self.chat_log.setOpenLinks(False)
-        self.chat_log.setMinimumHeight(170);self.chat_log.setMaximumHeight(260)
-        talk.addWidget(self.chat_log)
-        suggestions=QHBoxLayout();suggestions.setSpacing(6)
-        for text in CHAT_SUGGESTIONS[:4]:
-            chip=QPushButton(text);chip.setObjectName('suggest')
-            chip.clicked.connect(lambda _=False,t=text:self.use_suggestion(t));suggestions.addWidget(chip)
-        suggestions.addStretch();talk.addLayout(suggestions)
+        self.chat_log.setMinimumHeight(300)
+        talk.addWidget(self.chat_log,1)
+        for row in (CHAT_SUGGESTIONS[:2],CHAT_SUGGESTIONS[2:4]):
+            suggestions=QHBoxLayout();suggestions.setSpacing(6)
+            for text in row:
+                chip=QPushButton(text);chip.setObjectName('suggest')
+                chip.clicked.connect(lambda _=False,t=text:self.use_suggestion(t));suggestions.addWidget(chip)
+            suggestions.addStretch();talk.addLayout(suggestions)
         ask_row=QHBoxLayout()
         self.chat_input=QLineEdit();self.chat_input.setPlaceholderText('Tell the director what you want… e.g. “more slow-mo on the drop”')
         self.chat_input.returnPressed.connect(self.send_chat);ask_row.addWidget(self.chat_input,1)
         self.chat_send=QPushButton('Send');self.chat_send.setObjectName('primary');self.chat_send.clicked.connect(self.send_chat)
         ask_row.addWidget(self.chat_send);talk.addLayout(ask_row)
         self.chat_panel=chat;self.chat_job=None;self.chat_session=None;self.last_report=None
-        column.addWidget(chat)
         self.progress = QProgressBar(); self.progress.setRange(0,1); self.progress.setValue(0); self.progress.setTextVisible(False)
         progress_row=QHBoxLayout(); progress_row.addWidget(self.progress,1)
         self.cancel_button=QPushButton('Cancel');self.cancel_button.setEnabled(False)
@@ -395,9 +397,17 @@ class Studio(QMainWindow):
         self.status.setWordWrap(True); column.addWidget(self.status)
         column.addStretch()
         main.setMinimumHeight(main.sizeHint().height())
+        self.main_column=main
         workspace.addWidget(main)
-        inspector,right = panel()
-        right.addWidget(step(5,'Creative controls'))
+        inspector,side = panel()
+        side.addWidget(self.chat_panel,1)
+        self.manual_toggle=QPushButton('Manual controls ▸');self.manual_toggle.setCheckable(True)
+        self.manual_toggle.setToolTip('Every setting the director can change, if you prefer to set it yourself')
+        self.manual_toggle.toggled.connect(self.set_manual_visible)
+        side.addWidget(self.manual_toggle)
+        self.manual_controls=QWidget();self.manual_controls.setObjectName('step')
+        right=QVBoxLayout(self.manual_controls);right.setContentsMargins(0,0,0,0);right.setSpacing(12)
+        side.addWidget(self.manual_controls);self.manual_controls.hide()
         right.addWidget(label('Shape the story.','title'))
         self.analysis_label=label('SCENE ANALYSIS\nImport footage and choose Analyze.\nMotion/audio scores are heuristic; kill detection is planned.','muted')
         self.analysis_label.setWordWrap(True);right.addWidget(self.analysis_label)
@@ -476,6 +486,10 @@ class Studio(QMainWindow):
         form.addRow('Slow motion',self.slowmo)
         self.motion_blur=QCheckBox('Motion blur on speed ramps');self.motion_blur.setChecked(True)
         form.addRow(self.motion_blur)
+        self.beat_fx=QCheckBox('Beat FX • flash, colour split and shake on drops');self.beat_fx.setChecked(True)
+        form.addRow(self.beat_fx)
+        self.impacts=QCheckBox('Impact frames on slow-motion hits');self.impacts.setChecked(True)
+        form.addRow(self.impacts)
         self.sfx=QCheckBox('Transition swishes (quiet, on push/zoom blends)');self.sfx.setChecked(True)
         form.addRow(self.sfx)
         self.auto_music_section = QCheckBox('Choose an energetic section of my song')
@@ -497,7 +511,7 @@ class Studio(QMainWindow):
         self.taps=[]
         form_widget=QWidget();form_widget.setLayout(form);form_widget.setMinimumHeight(350)
         right.addWidget(form_widget)
-        right.addStretch()
+        right=side
         right.addWidget(label('H.264 / AAC  •  CPU RENDER','eyebrow'))
         self.export_button = QPushButton('Generate and export montage'); self.export_button.setObjectName('primary')
         self.export_button.clicked.connect(self.export)
@@ -513,11 +527,10 @@ class Studio(QMainWindow):
         self.open_button = QPushButton('Open export folder')
         self.open_button.setEnabled(False); self.open_button.clicked.connect(self.open_export)
         right.addWidget(self.open_button)
-        inspector.setMinimumHeight(960)
         inspector_scroll=QScrollArea();inspector_scroll.setWidgetResizable(True);inspector_scroll.setWidget(inspector)
-        inspector_scroll.setMinimumWidth(360);inspector_scroll.setMaximumWidth(440);workspace.addWidget(inspector_scroll)
-        self.inspector_scroll=inspector_scroll;inspector_scroll.hide()
-        workspace.setSizes([1100,400])
+        inspector_scroll.setMinimumWidth(380);inspector_scroll.setMaximumWidth(480);workspace.addWidget(inspector_scroll)
+        self.inspector_scroll=inspector_scroll
+        workspace.setSizes([1060,440])
         self.footage.currentTextChanged.connect(self.preview_file)
         self.player.errorOccurred.connect(lambda error,message:self.status.setText('Preview: '+message))
         saved_model=str(self.preferences.value('local_model',LOCAL_MODEL)) or LOCAL_MODEL
@@ -603,12 +616,18 @@ class Studio(QMainWindow):
         self.cancel_button.setEnabled(False);self.progress.setRange(0,1);self.progress.setValue(1)
 
     def show_advanced(self,target=None):
-        self.inspector_scroll.show()
+        self.inspector_scroll.show();self.manual_toggle.setChecked(True)
         if target is not None:target.setFocus();self.inspector_scroll.ensureWidgetVisible(target)
 
     def toggle_advanced(self):
-        visible=self.inspector_scroll.isHidden()
-        self.inspector_scroll.setVisible(visible)
+        self.inspector_scroll.show();self.manual_toggle.setChecked(not self.manual_toggle.isChecked())
+
+    def set_manual_visible(self,visible):
+        self.manual_controls.setVisible(visible)
+        self.manual_toggle.setText('Manual controls ▾' if visible else 'Manual controls ▸')
+
+    def focus_chat(self):
+        self.inspector_scroll.show();self.inspector_scroll.ensureWidgetVisible(self.chat_input);self.chat_input.setFocus()
 
     def clear_music_selection(self):
         self.music_path=None
@@ -807,7 +826,8 @@ class Studio(QMainWindow):
 
     def show_timeline(self,timeline):
         self.timeline_table.show();self.timeline_table.setMaximumHeight(120)
-        self.workspace.setMaximumHeight(720)
+        # Grow the page with the table so the timeline and chat below it are never cropped.
+        self.main_column.setMinimumHeight(self.main_column.sizeHint().height())
         self.timeline=timeline; self.lanes.set_timeline(timeline); self.replay_button.setEnabled(True)
         self.formats_button.setEnabled(True)
         for button in self.edit_buttons:button.setEnabled(True)
@@ -828,8 +848,16 @@ class Studio(QMainWindow):
             try: self.show_timeline(Timeline.load(path))
             except Exception as error: QMessageBox.warning(self,'Cannot load timeline',str(error));return
             analysis=Path(path).with_name(Path(path).name.replace('.timeline.json','.analysis.json'))
-            try:self.alternates=[c for c in json.loads(analysis.read_text()).get('candidates',[]) if not c.get('exclude')]
-            except (OSError,ValueError):self.alternates=[]
+            self.read_analysis(analysis)
+
+    def read_analysis(self,path):
+        """Unused moments (for swaps) and the music analysis (beats/phrases) of a saved edit."""
+        try:
+            data=json.loads(Path(path).read_text())
+            self.alternates=[c for c in data.get('candidates',[]) if not c.get('exclude')]
+            self.music_facts=data.get('music') or {}
+        except (OSError,ValueError):
+            self.alternates=[];self.music_facts={}
 
     def delivery_settings(self):
         key=self.export_preset.currentData()
@@ -870,8 +898,8 @@ class Studio(QMainWindow):
                 song=self.music_path; story=self.story()
                 if automatic:
                     story.update(faith_message=self.closing_line.text().strip(),edit_profile='cinematic',
-                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,impacts=True,
-                                 beat_fx=True,target_lufs=-14.0,
+                                 gameplay_gain=.25,music_gain=.8,normalize_audio=True,transition='cinematic',punch_through=True,match_shots=True,bookends=True,
+                                 impacts=self.impacts.isChecked(),beat_fx=self.beat_fx.isChecked(),target_lufs=-14.0,
                                  auto_music_section=self.auto_music_section.isChecked())
                 if preview:story['interpolation']='blend'   # fast; the final render uses the chosen mode
                 brief=self.ai_brief.text().strip() or STORY_TONES[self.story_tone.currentData()][2]
@@ -893,9 +921,7 @@ class Studio(QMainWindow):
     def completed(self,report,path,replay,preview=False):
         self.last_output=path;self.last_report=report
         analysis=Path(path).with_suffix('.analysis.json')
-        if analysis.is_file():
-            try:self.alternates=[c for c in json.loads(analysis.read_text()).get('candidates',[]) if not c.get('exclude')]
-            except (OSError,ValueError):self.alternates=[]
+        if analysis.is_file():self.read_analysis(analysis)
         if preview:
             self.preview_timeline=Path(path).with_suffix('.timeline.json')
             self.finalize_button.setEnabled(True)
@@ -928,11 +954,20 @@ class Studio(QMainWindow):
     def chat_state(self):
         shots=[]
         if self.timeline is not None:
+            phrases=(getattr(self,'music_facts',None) or {}).get('phrases',[])
+            outs=list(self.timeline.boundary_transitions)
+            names={v:k for k,v in PLAN_TRANSITIONS.items()}
+            start=0.0
             for i,clip in enumerate(self.timeline.clips):
                 moment=next((c for c in self.alternates
                              if c['source']==clip.source and clip.start<=c['time']<=clip.start+clip.duration),{})
-                shots.append(dict(shot=i+1,seconds=round(clip.duration,2),slow_motion=clip.speed_profile!='normal',
-                                  punch_ins=len(clip.accents),event=moment.get('event'),note=moment.get('ai_note')))
+                marks=sorted({k for p in phrases if start-.05<=p['time']<start+clip.duration-.05 for k in p['kinds']})
+                treatment='slow motion' if clip.speed_profile!='normal' else 'punch' if clip.accents else 'straight'
+                out=None if i==len(self.timeline.clips)-1 else names.get(outs[i],outs[i]) if i<len(outs) else 'cut'
+                shots.append(dict(shot=i+1,starts_at=round(start,2),seconds=round(clip.duration,2),treatment=treatment,
+                                  transition_out=out,music=marks or None,score=round(clip.score,2),
+                                  event=moment.get('event'),note=moment.get('ai_note')))
+                start+=clip.duration
         result=None
         if self.last_report:
             rhythm=self.last_report.get('music_alignment') or {}
@@ -943,6 +978,7 @@ class Studio(QMainWindow):
                     look=self.look.currentData(),tone=self.story_tone.currentData(),tones=list(STORY_TONES),
                     closing_line=self.closing_line.text(),brief=self.ai_brief.text(),format=self.export_preset.currentData(),
                     slow_motion=self.slowmo.currentData(),swishes=self.sfx.isChecked(),motion_blur=self.motion_blur.isChecked(),
+                    beat_fx=self.beat_fx.isChecked(),
                     director=self.director_mode.currentData(),shot_count=len(shots),shots=shots[:40],
                     has_preview=self.preview_timeline is not None,last_result=result)
 
@@ -952,7 +988,7 @@ class Studio(QMainWindow):
                  'warn':('#fff4dc','#a76a00')}
         background,ink=colours[kind]
         align='right' if kind=='user' else 'left'
-        width='68%' if kind in ('user','reply') else '52%'
+        width='82%' if kind in ('user','reply') else '74%'
         # Qt rich text: tables honour width/align/bgcolor/cellpadding (CSS radii are ignored).
         self.chat_log.append(f'<table width="{width}" align="{align}" bgcolor="{background}" cellpadding="8" '
                              f'cellspacing="0" style="margin-bottom:6px;"><tr><td style="color:{ink};">'
@@ -999,6 +1035,8 @@ class Studio(QMainWindow):
 
     def chat_replied(self,result):
         self.chat_bubble('Director',result['reply'])
+        for note in result.get('grounded',[]):
+            self.chat_bubble('Understood',note,'note')
         for action,value,reason in result['rejected']:
             self.chat_bubble('Not applied',f'{action} “{value}”: {reason}','warn')
         self.apply_chat_actions(list(result['actions']))
@@ -1038,8 +1076,25 @@ class Studio(QMainWindow):
             self.closing_line.setText(value);return True,f'Closing line → “{value}”' if value else 'Closing line removed'
         if action=='set_brief':
             self.ai_brief.setText(value);return True,f'Brief → {value}'
-        if action in ('set_swishes','set_motion_blur'):
-            box=self.sfx if action=='set_swishes' else self.motion_blur
+        if action=='apply_style':
+            from .edit_chat import STYLES
+            notes=[self.apply_chat_action(name,setting)[1] for name,setting in STYLES[value].items()]
+            return True,f'Style → {value}: '+'; '.join(notes)
+        if action in ('set_shot','set_cut'):
+            if self.timeline is None:return False,'Create a montage first'
+            number,detail=value.split(' ',1)
+            row=int(number)-1
+            from .pipeline import edit_shot
+            try:
+                beats=(getattr(self,'music_facts',None) or {}).get('beats',[])
+                edited=edit_shot(self.timeline,row,treatment=detail if action=='set_shot' else None,
+                                 transition=detail if action=='set_cut' else None,beats=beats)
+            except ValueError as error:return False,str(error)
+            self.show_timeline(edited);self.timeline_table.selectRow(row)
+            what=f'Shot {row+1} → {detail}' if action=='set_shot' else f'Out of shot {row+1} → {detail.replace("_"," ")}'
+            return True,what+' • say "render it" to see it'
+        if action in ('set_swishes','set_motion_blur','set_beat_fx'):
+            box={'set_swishes':self.sfx,'set_motion_blur':self.motion_blur,'set_beat_fx':self.beat_fx}[action]
             box.setChecked(value=='on');return True,f'{box.text()} → {value}'
         if action in ('move_shot','swap_shot'):
             if self.timeline is None:return False,'Create a montage first'
@@ -1063,8 +1118,11 @@ class Studio(QMainWindow):
         if action=='make':
             if self.job is not None:return False,'A job is already running'
             if value=='final':self.finalize_preview()
+            elif value=='render':self.export(replay=True)
+            elif value=='formats':self.export_formats()
             else:self.export(automatic=True,preview=value=='preview')
-            return True,{'preview':'Making a quick preview','montage':'Creating the montage','final':'Rendering the final from the preview'}[value]
+            return True,{'preview':'Making a quick preview','montage':'Creating the montage','final':'Rendering the final from the preview',
+                         'render':'Rendering the edited timeline','formats':'Delivering YouTube, Shorts and Instagram versions'}[value]
         return False,f'Unknown action {action}'
 
     def export_formats(self):

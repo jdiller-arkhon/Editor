@@ -100,7 +100,16 @@ The same qwen3.5:9b with the earlier single-judgement prompt caught 1/5 death sc
 
 ## Director chat
 
-The **Director chat** panel lets you talk to the director in plain words ("make it faster", "45 seconds with a punchy look, then show me", "use this song: <link>", "swap shot 4"). It answers and changes the edit only through validated actions that drive the same controls you see (pace, length, look, tone, closing line, brief, song, export format, slow motion, swishes, blur, move/swap shot, preview/create/final). Unknown values, impossible shots and **actions on topics you did not mention are rejected and shown** — a live test of the 3B model tried to swap the song unasked. When you ask for feedback ("how is it?", "which shot is weakest?") the director also sees a contact sheet of the current shots. It runs on the local model by default, or Claude when Claude is the chosen director.
+The **Director chat** panel lets you talk to the director in plain words. It answers and changes the edit only through validated actions that drive the same controls you see:
+
+- settings: pace, length, look, tone, closing line, brief, song (any link, path or title), export format, slow motion, swishes, motion blur, beat FX;
+- **styles**: "make it hype" (fast, punchy, beat FX), "cinematic" (film grade, smooth slow motion), "chill" (calm, clean) or "raw" (fast, no effects);
+- **single shots**: "slow motion on shot 4", "punch-ins on shot 2", "dissolve out of shot 5", "swap shot 3", "move shot 2 later";
+- **renders**: quick preview, full montage, final from the preview, render the edited timeline, or deliver every platform format.
+
+It knows each shot's start time, length, treatment, outgoing transition, musical marks (drop/build) and judged event, so it can explain the edit ("why open with that shot?"). When you ask for feedback it also sees a contact sheet of the shots. Unknown values, impossible shots and **actions on topics you did not mention are rejected and shown**, and **explicit values in your words win** over the model's paraphrase (a number of seconds, a pasted link, a named look, pace or style).
+
+Measured with qwen3.5:9b on 16 scripted requests (CPU): before these changes 11/12 everyday requests and 0/4 of the new abilities; with worked examples in the prompt the new abilities went to 4/4 but three everyday requests regressed (a garbled length, a dropped link, "film" read as "cinematic"); grounding to the person's words targets exactly those cases (final numbers in the development log).
 
 ## Simple mode: drop, song, create
 
