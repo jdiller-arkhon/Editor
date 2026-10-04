@@ -353,6 +353,13 @@ class DesktopTests(unittest.TestCase):
             window.resize(1200,820);self.app.processEvents()               # also at the minimum window size
             self.assertLessEqual(page.width(),window.body_scroll.viewport().width())
             self.assertLessEqual(side.widget().width(),side.viewport().width())
+            # Windows renders text wider than Linux (CI saw 386 px of content in a 380 px panel).
+            # Simulate wider content: the panel must grow to fit it rather than clip it.
+            window.manual_toggle.setMinimumWidth(430)
+            window.resize(1201,820);self.app.processEvents()
+            self.assertLessEqual(side.widget().width(),side.viewport().width())
+            self.assertGreaterEqual(side.viewport().width(),430)
+            self.assertLessEqual(page.width(),window.body_scroll.viewport().width())
             window.close()
 
     def test_any_song_can_be_pasted_into_one_box(self):

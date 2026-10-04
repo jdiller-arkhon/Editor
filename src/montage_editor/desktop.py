@@ -528,6 +528,7 @@ class Studio(QMainWindow):
         self.open_button.setEnabled(False); self.open_button.clicked.connect(self.open_export)
         right.addWidget(self.open_button)
         inspector_scroll=QScrollArea();inspector_scroll.setWidgetResizable(True);inspector_scroll.setWidget(inspector)
+        inspector_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inspector_scroll.setMinimumWidth(380);inspector_scroll.setMaximumWidth(480);workspace.addWidget(inspector_scroll)
         self.inspector_scroll=inspector_scroll
         workspace.setSizes([1060,440])
@@ -615,6 +616,21 @@ class Studio(QMainWindow):
         self.job.deleteLater();self.job=None;self.setup_button.setEnabled(True);self.create_button.setEnabled(True)
         self.cancel_button.setEnabled(False);self.progress.setRange(0,1);self.progress.setValue(1)
 
+    def fit_side_panel(self):
+        """Keep the side panel at least as wide as its content with this platform's real font metrics
+        (Windows renders text wider than Linux), so nothing in it is ever clipped."""
+        side=self.inspector_scroll
+        chrome=side.width()-side.viewport().width()
+        need=side.widget().minimumSizeHint().width()+chrome
+        if need>side.minimumWidth():
+            side.setMinimumWidth(need);side.setMaximumWidth(max(side.maximumWidth(),need))
+
+    def showEvent(self,event):
+        super().showEvent(event);self.fit_side_panel()
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event);self.fit_side_panel()
+
     def show_advanced(self,target=None):
         self.inspector_scroll.show();self.manual_toggle.setChecked(True)
         if target is not None:target.setFocus();self.inspector_scroll.ensureWidgetVisible(target)
@@ -625,6 +641,7 @@ class Studio(QMainWindow):
     def set_manual_visible(self,visible):
         self.manual_controls.setVisible(visible)
         self.manual_toggle.setText('Manual controls ▾' if visible else 'Manual controls ▸')
+        self.fit_side_panel()
 
     def focus_chat(self):
         self.inspector_scroll.show();self.inspector_scroll.ensureWidgetVisible(self.chat_input);self.chat_input.setFocus()
