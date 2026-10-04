@@ -197,6 +197,11 @@ def validate_actions(actions, state, message=None):
                 reason = 'make a preview first'
             if word in ('render', 'formats') and not shots:
                 reason = 'create a montage first'
+            # Big renders need explicit words: "a TikTok version" is one format, not every platform.
+            elif word == 'formats' and message is not None and not re.search(
+                    r'\b(every|all|each|multiple|several)\b.*\b(platform|format|version|site)s?\b|\bformats\b|\bplatforms\b',
+                    message.lower()):
+                reason = 'say "every platform" to deliver all formats'
         if reason is None and not requested(action, message):
             reason = 'not asked for'
         (rejected.append((action, value, reason)) if reason else accepted.append((action, value)))
@@ -206,6 +211,9 @@ def validate_actions(actions, state, message=None):
     return accepted, rejected
 
 
+SWITCHES = {'set_beat_fx': r'beat (?:fx|effects?|flash(?:es)?)|flash(?:es)?|colou?r split',
+            'set_swishes': r'swish(?:es)?|whoosh(?:es)?|swish sounds?|transition sounds?',
+            'set_motion_blur': r'motion blur|blur'}
 URL = re.compile(r'(?:https?://|www\.|youtu\.be/|open\.spotify\.com/|spotify:)\S+', re.I)
 
 
@@ -221,8 +229,11 @@ def ground(accepted, rejected, message, state):
     accepted, notes = list(accepted), []
     chosen = {a for a, _ in accepted}
 
+    styles = {v for a, v in accepted if a == 'apply_style'}
+
     def named(options):
-        hits = [o for o in options if re.search(rf'\b{re.escape(o)}\b', text)]
+        # A chosen style's name ("cinematic") does not also count as naming a look or pace.
+        hits = [o for o in options if o not in styles - {None} and re.search(rf'\b{re.escape(o)}\b', text)]
         return hits[0] if len(hits) == 1 else None
 
     def put(action, value, why):
@@ -238,13 +249,50 @@ def ground(accepted, rejected, message, state):
             number = re.search(r'\b(\d{1,3}(?:\.\d+)?)\s*(?:s\b|sec|second)', text)
             if number and 5 <= float(number.group(1)) <= 600:
                 put('set_length', number.group(1), 'seconds'); rejected.remove((action, value, reason))
-    look, pace, style = named(LOOKS), named(PACES), named(STYLES)
+    look, pace = named(LOOKS), named(PACES)
+    style = next((o for o in STYLES if re.search(rf'\b{re.escape(o)}\b', text)), None)
     if 'set_look' in chosen and look and look != 'none':
         put('set_look', look, 'look named')
     if 'set_pace' in chosen and pace:
         put('set_pace', pace, 'pace named')
     if 'apply_style' in chosen and style:
         put('apply_style', style, 'style named')
+    # A style already sets its own look/pace/effects: a separate setting that merely repeats the
+    # style's name (cinematic is both a style and a look) would undo part of it.
+    for name in [v for a, v in accepted if a == 'apply_style']:
+        # ...and settings the style already makes are folded into it.
+        repeats = [(a, v) for a, v in accepted if a in STYLES[name] and (v == name or v == STYLES[name][a])]
+        for entry in repeats:
+            accepted.remove(entry); notes.append(f'{entry[0]} "{entry[1]}" left to the {name} style')
+    # Features switched on or off by name ("no swish sounds", "turn off the beat effects").
+    for action, pattern in SWITCHES.items():
+        for feature in re.finditer(rf'\b(?:{pattern})\b', text):
+            before = re.split(r'[.,;:]| but | and ', text[max(0, feature.start()-30):feature.start()])[-1]
+            verbs = re.findall(r'\b(no|without|turn off|switch off|disable|remove|less|lose|kill|drop|'
+                               r'add|turn on|switch on|enable|more|with)\b', before)
+            after = re.match(r'\s*(?:sounds?\s+)?(off|on)\b', text[feature.end():])
+            if after and re.search(r'\b(turn|switch|put|have)\b', before):        # "turn the swishes off"
+                put(action, after.group(1), 'switched by name')
+            elif verbs:                                   # the nearest switch word before the feature decides
+                put(action, 'on' if verbs[-1] in ('add', 'turn on', 'switch on', 'enable', 'more', 'with') else 'off',
+                    'switched by name')
+    # Explicit shot commands ("move shot 2 later", "swap shot 3") need no interpretation.
+    shots = int((state or {}).get('shot_count') or 0)
+    move = re.search(r'\bmove (?:shot|clip) (\d+) (earlier|later|back|forward)\b', text)
+    if move and 'move_shot' not in chosen and 1 <= int(move.group(1)) <= shots:
+        direction = {'back': 'later', 'forward': 'earlier'}.get(move.group(2), move.group(2))
+        number = int(move.group(1))
+        if not (direction == 'earlier' and number == 1) and not (direction == 'later' and number == shots):
+            put('move_shot', f'{number} {direction}', 'shot command')
+    swap = re.search(r'\b(?:swap|replace) (?:out )?(?:shot|clip) (\d+)\b|\b(?:shot|clip) (\d+)\b[^.]*\b(?:swap|replace)\b', text)
+    if swap and 'swap_shot' not in chosen:
+        number = int(swap.group(1) or swap.group(2))
+        if 1 <= number <= shots:
+            put('swap_shot', str(number), 'shot command')
+    # "Render it" with an edited timeline but no preview means render the edit, not "final from preview".
+    for entry in list(rejected):
+        if entry[0] == 'make' and entry[1] == 'final' and shots and re.search(r'\brender\b', text):
+            rejected.remove(entry); put('make', 'render', 'render the edited timeline')
     link = URL.search(message or '')
     if link and 'set_music' not in chosen and re.search(r'\b(song|music|track|soundtrack|audio|tune)\b', text):
         put('set_music', link.group(0).rstrip('.,)'), 'link pasted')

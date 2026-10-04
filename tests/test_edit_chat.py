@@ -163,6 +163,34 @@ class EditChatTests(unittest.TestCase):
         self.assertEqual(ground([('set_pace', 'fast')], [], 'faster, but keep the film look', STATE)[0],
                          [('set_pace', 'fast')])
         self.assertEqual(ground([('make', 'preview')], [], 'show me', STATE), ([('make', 'preview')], [], []))
+        # Features switched by name, nearest switch word wins (qwen3.5:9b returned no actions for the first).
+        on_off = lambda message: ground([], [], message, STATE)[0]
+        self.assertEqual(on_off('less flashy please: no beat effects and no swish sounds'),
+                         [('set_beat_fx', 'off'), ('set_swishes', 'off')])
+        self.assertEqual(on_off('add swishes but no motion blur'), [('set_swishes', 'on'), ('set_motion_blur', 'off')])
+        self.assertEqual(on_off('turn the whoosh sounds off'), [('set_swishes', 'off')])
+        self.assertEqual(on_off('blurry footage, use the clean look'), [])          # a description, not a switch
+        # A style is not undone by a setting that only repeats its name (qwen3.5:9b added set_look cinematic).
+        self.assertEqual(ground([('apply_style', 'cinematic'), ('set_look', 'cinematic')], [], 'I want it to feel cinematic',
+                                STATE)[0], [('apply_style', 'cinematic')])
+        # Explicit shot commands and "render it" (qwen3.5:9b returned nothing / asked for final-from-preview).
+        self.assertEqual(ground([], [], 'move shot 2 later', STATE)[0], [('move_shot', '2 later')])
+        self.assertEqual(ground([], [], 'shot 3 is boring, swap it', STATE)[0], [('swap_shot', '3')])
+        self.assertEqual(ground([], [], 'move shot 5 later', STATE)[0], [])            # already the last of 5
+        self.assertEqual(ground([], [('make', 'final', 'make a preview first')], 'ok I like those changes, render it',
+                                STATE)[:2], ([('make', 'render')], []))
+        # Settings the style already makes are folded into it (qwen3.5:9b added pace and beat FX to "hype").
+        self.assertEqual(ground([('apply_style', 'hype'), ('set_beat_fx', 'on'), ('set_pace', 'fast'), ('make', 'montage')], [],
+                                'make it hype, a really high-energy montage', STATE)[0],
+                         [('apply_style', 'hype'), ('make', 'montage')])
+        # "A TikTok version" is one format, not a render of every platform.
+        accepted, rejected = validate_actions([dict(action='set_format', value='shorts-1080x1920'),
+                                               dict(action='make', value='formats')], STATE, 'I want a TikTok version')
+        self.assertEqual((accepted, rejected[0][0]), ([('set_format', 'shorts-1080x1920')], 'make'))
+        self.assertEqual(validate_actions([dict(action='make', value='formats')], STATE, 'export it for all platforms')[0],
+                         [('make', 'formats')])
+        self.assertEqual(ground([('apply_style', 'cinematic'), ('set_look', 'mono')], [], 'cinematic but black and white',
+                                STATE)[0], [('apply_style', 'cinematic'), ('set_look', 'mono')])
 
 
 if __name__ == '__main__':
