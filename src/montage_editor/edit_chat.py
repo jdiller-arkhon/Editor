@@ -257,6 +257,11 @@ def ground(accepted, rejected, message, state):
         put('set_pace', pace, 'pace named')
     if 'apply_style' in chosen and style:
         put('apply_style', style, 'style named')
+    # A word that names both a style and a look ("cinematic") means the style unless the person says "look".
+    for name in STYLES:
+        if re.search(rf'\b{name}\b', text) and not re.search(r'\b(look|grade|colou?r)\b', text) and \
+                ('set_look', name) in accepted and 'apply_style' not in {a for a, _ in accepted}:
+            accepted.remove(('set_look', name)); put('apply_style', name, 'style named')
     # A style already sets its own look/pace/effects: a separate setting that merely repeats the
     # style's name (cinematic is both a style and a look) would undo part of it.
     for name in [v for a, v in accepted if a == 'apply_style']:

@@ -115,3 +115,13 @@ been run in this repository, so judgement quality on real gameplay is not yet me
   notes are recorded in the analysis sidecar. A failed review keeps the first-pass cut and records why.
 - Excluded (non-gameplay) candidates are never sent for review. Live judgement quality remains
   unmeasured here (no credentials); tests use a mocked transport with real images and renders.
+
+# Director chat (`edit_chat.py`)
+
+The chat model (local by default) returns a reply plus named actions. Three layers keep it reliable:
+
+1. **Validation**: only known actions with valid values; impossible shots and renders are rejected and shown.
+2. **Consent**: an action runs only if the person's message is about that topic (`TOPICS`); "every format" renders need explicit words.
+3. **Grounding** (`ground`): explicit values in the person's words win over the model's paraphrase — seconds, pasted links, named looks/paces/styles, named on/off switches (nearest switch word wins), explicit shot commands ("move shot 2 later", "swap shot 3"), and "render it" for an edited timeline. A style is not undone by settings that repeat it.
+
+Scripted evaluation (`scratchpad` harness, not shipped; 24 requests: 12 everyday, 4 shot/style/render skills, 8 harder combined or negated requests; real qwen3.5:9b on a 4-core CPU, ~31 s per request). Each grounding rule was added for a failure observed in these runs and is unit-tested with that exact case. The model is not deterministic, so results vary by one or two requests between runs; see the development log for the run-by-run numbers.

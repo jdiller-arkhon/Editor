@@ -109,7 +109,7 @@ The **Director chat** panel lets you talk to the director in plain words. It ans
 
 It knows each shot's start time, length, treatment, outgoing transition, musical marks (drop/build) and judged event, so it can explain the edit ("why open with that shot?"). When you ask for feedback it also sees a contact sheet of the shots. Unknown values, impossible shots and **actions on topics you did not mention are rejected and shown**, and **explicit values in your words win** over the model's paraphrase (a number of seconds, a pasted link, a named look, pace or style).
 
-Measured with qwen3.5:9b on 16 scripted requests (CPU): before these changes 11/12 everyday requests and 0/4 of the new abilities; with worked examples in the prompt the new abilities went to 4/4 but three everyday requests regressed (a garbled length, a dropped link, "film" read as "cinematic"); grounding to the person's words targets exactly those cases (final numbers in the development log).
+Measured with qwen3.5:9b on 16 scripted requests (CPU): before these changes 11/12 everyday requests and 0/4 of the new abilities; with worked examples in the prompt the new abilities went to 4/4 but three everyday requests regressed (a garbled length, a dropped link, "film" read as "cinematic"); grounding to the person's words fixed those. On a larger set of 24 requests (adding 8 harder combined or negated ones), two clean runs scored 24/24 at ~31 s per request; it is a small scripted set, not a guarantee.
 
 ## Simple mode: drop, song, create
 

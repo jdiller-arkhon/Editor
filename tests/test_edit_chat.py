@@ -173,6 +173,11 @@ class EditChatTests(unittest.TestCase):
         # A style is not undone by a setting that only repeats its name (qwen3.5:9b added set_look cinematic).
         self.assertEqual(ground([('apply_style', 'cinematic'), ('set_look', 'cinematic')], [], 'I want it to feel cinematic',
                                 STATE)[0], [('apply_style', 'cinematic')])
+        # "Feel cinematic" is the style; "a cinematic look" is the look.
+        self.assertEqual(ground([('set_look', 'cinematic')], [], 'I want it to feel cinematic', STATE)[0],
+                         [('apply_style', 'cinematic')])
+        self.assertEqual(ground([('set_look', 'cinematic')], [], 'give it a cinematic look', STATE)[0],
+                         [('set_look', 'cinematic')])
         # Explicit shot commands and "render it" (qwen3.5:9b returned nothing / asked for final-from-preview).
         self.assertEqual(ground([], [], 'move shot 2 later', STATE)[0], [('move_shot', '2 later')])
         self.assertEqual(ground([], [], 'shot 3 is boring, swap it', STATE)[0], [('swap_shot', '3')])
